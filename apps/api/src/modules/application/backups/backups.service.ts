@@ -6,6 +6,7 @@ import {
   Injectable,
   InternalServerErrorException,
   Logger,
+  NotFoundException,
   Optional,
 } from '@nestjs/common';
 import { createHash } from 'node:crypto';
@@ -13,6 +14,11 @@ import fs, { existsSync, mkdirSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import * as tar from 'tar';
+import {
+  createPaginatedResponse,
+  type PaginatedResponse,
+} from '../../../common/pagination/paginated-response.dto.js';
+import { buildPaginationSqlFragment } from '../../../common/pagination/sql-query-builder.js';
 import { newId } from '../../../common/persistence/identifiers.js';
 import { nowIso } from '../../../common/persistence/timestamps.js';
 import { AppConfigService } from '../../../config/app-config.service.js';
@@ -20,11 +26,17 @@ import { resolveDefaultDataDir } from '../../../config/data-dir.js';
 import { DatabaseService } from '../../../database/database.service.js';
 import { FileStorageService } from '../../../file-storage/file-storage.service.js';
 import {
+  ALLOWED_BACKUP_SORT_COLUMNS,
   type BackupFileInventoryItem,
   type BackupManifest,
+  type BackupRecordRow,
   type CreateBackupOptions,
 } from './backups.types.js';
-import { BackupResponseDto } from './dto/backup-response.dto.js';
+import {
+  BACKUP_TRIGGERS,
+  BackupResponseDto,
+} from './dto/backup-response.dto.js';
+import { ListBackupsQueryDto } from './dto/list-backups-query.dto.js';
 
 /**
  * Current backup archive format specification version.
@@ -37,7 +49,7 @@ export const BACKUP_FORMAT_VERSION = 1;
 export const DEFAULT_APP_VERSION = '0.1.0';
 
 /**
- * Service managing backup creation and archive recording.
+ * Service managing backup creation, listing, retrieval, and deletion.
  *
  * ## Archive Format
  * A backup archive is a single gzipped tar file (`.tar.gz`) containing:
@@ -64,7 +76,13 @@ export const DEFAULT_APP_VERSION = '0.1.0';
  *
  * ## Concurrency
  * Backups are serialised: concurrent backups are disallowed. If a backup is already
- * running, subsequent requests immediately fail with `409 Conflict`.
+ * running, subsequent creation requests immediately fail with `409 Conflict`.
+ *
+ * ## Deletion Semantics
+ * Deleting a backup removes its database row and deletes the archive file from disk.
+ * Deleting a backup is **irreversible** and **does not affect active application data**.
+ * If the physical archive file is already missing on disk (e.g. manually deleted by the user),
+ * the operation succeeds and removes the lingering database row.
  */
 @Injectable()
 export class BackupsService {
@@ -183,6 +201,8 @@ export class BackupsService {
         sizeBytes,
         trigger,
         createdAt,
+        hasArchive: true,
+        isAvailable: true,
       };
     } catch (error) {
       this.logger.error(
@@ -229,6 +249,172 @@ export class BackupsService {
 
       this.isBackupInProgress = false;
     }
+  }
+
+  /**
+   * Retrieves a paginated list of backups, sorted newest first by default.
+   *
+   * @param query - Pagination, sorting, and trigger filter parameters.
+   * @returns Paginated collection of backup metadata items.
+   * @throws BadRequestException (400) if sorting or trigger filter is invalid.
+   */
+  async findAll(
+    query: ListBackupsQueryDto = new ListBackupsQueryDto(),
+  ): Promise<PaginatedResponse<BackupResponseDto>> {
+    const conditions: string[] = [];
+    const filterParams: unknown[] = [];
+
+    if (query.trigger) {
+      if (!BACKUP_TRIGGERS.includes(query.trigger)) {
+        throw new BadRequestException(
+          `Invalid trigger filter: "${query.trigger}". Must be 'manual' or 'scheduled'`,
+        );
+      }
+      conditions.push('trigger = ?');
+      filterParams.push(query.trigger);
+    }
+
+    const whereClause =
+      conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    const countSql = `SELECT COUNT(*) AS total FROM backups ${whereClause}`;
+    const countRow = this.databaseService.get<{ total: number }>(
+      countSql,
+      filterParams,
+    );
+    const total = countRow?.total ?? 0;
+
+    const pagination = buildPaginationSqlFragment({
+      query,
+      allowedSortColumns: ALLOWED_BACKUP_SORT_COLUMNS,
+      defaultSortKey: 'createdAt',
+      defaultOrder: 'desc',
+      tiebreakerColumn: 'id',
+    });
+
+    const selectSql = `SELECT * FROM backups ${whereClause} ${pagination.clauseSql}`;
+    const rows = this.databaseService.all<BackupRecordRow>(selectSql, [
+      ...filterParams,
+      ...pagination.params,
+    ]);
+
+    return createPaginatedResponse(
+      rows.map((row) => this.mapRowToResponse(row)),
+      total,
+      pagination.params[0],
+      pagination.params[1],
+    );
+  }
+
+  /**
+   * Retrieves a single backup by its unique identifier, or null if not found.
+   *
+   * @param id - Backup UUIDv7 identifier.
+   * @returns Backup metadata if found, null otherwise.
+   */
+  async findById(id: string): Promise<BackupResponseDto | null> {
+    const row = this.databaseService.get<BackupRecordRow>(
+      'SELECT * FROM backups WHERE id = ?',
+      [id],
+    );
+    if (!row) {
+      return null;
+    }
+    return this.mapRowToResponse(row);
+  }
+
+  /**
+   * Retrieves a single backup by its unique identifier.
+   *
+   * @param id - Backup UUIDv7 identifier.
+   * @returns Backup metadata.
+   * @throws NotFoundException (404) if no backup exists with the given ID.
+   */
+  async findOne(id: string): Promise<BackupResponseDto> {
+    const backup = await this.findById(id);
+    if (!backup) {
+      throw new NotFoundException({
+        code: 'BACKUP_NOT_FOUND',
+        message: `No backup found with ID "${id}"`,
+      });
+    }
+    return backup;
+  }
+
+  /**
+   * Deletes a backup record and its archive file from disk.
+   *
+   * Deletion order:
+   * 1. The database row is deleted first.
+   * 2. The archive file is unlinked from the filesystem.
+   *
+   * Ordering justification:
+   * Deleting the database row before the file avoids leaving an unrecoverable database
+   * row pointing at a deleted archive if an unexpected crash occurs mid-deletion.
+   * If the physical archive is already gone, the database row is still cleaned up cleanly.
+   *
+   * This operation is irreversible and does not affect the active database or current
+   * application data.
+   *
+   * @param id - Backup UUIDv7 identifier.
+   * @throws NotFoundException (404) if no backup exists with the given ID.
+   */
+  async deleteBackup(id: string): Promise<void> {
+    const row = this.databaseService.get<BackupRecordRow>(
+      'SELECT * FROM backups WHERE id = ?',
+      [id],
+    );
+    if (!row) {
+      throw new NotFoundException({
+        code: 'BACKUP_NOT_FOUND',
+        message: `No backup found with ID "${id}"`,
+      });
+    }
+
+    // 1. Delete database row first
+    this.databaseService.run('DELETE FROM backups WHERE id = ?', [id]);
+
+    // 2. Unlink archive file
+    if (row.file_path) {
+      try {
+        if (existsSync(row.file_path)) {
+          fs.unlinkSync(row.file_path);
+          this.logger.log(`Deleted backup archive file: ${row.file_path}`);
+        } else {
+          this.logger.warn(
+            `Backup archive file was already missing on disk: ${row.file_path}`,
+          );
+        }
+      } catch (unlinkError) {
+        this.logger.warn(
+          `Failed to unlink backup archive file "${row.file_path}" for backup "${id}": ${unlinkError instanceof Error ? unlinkError.message : String(unlinkError)}`,
+        );
+      }
+    }
+  }
+
+  /**
+   * Maps a database row from the `backups` table to a public `BackupResponseDto`.
+   *
+   * Never exposes `file_path`. Performs a cheap `existsSync` check to verify whether
+   * the archive file is still physically present on disk.
+   */
+  private mapRowToResponse(row: BackupRecordRow): BackupResponseDto {
+    let fileExists = false;
+    try {
+      fileExists = Boolean(row.file_path && existsSync(row.file_path));
+    } catch {
+      fileExists = false;
+    }
+
+    return {
+      id: row.id,
+      sizeBytes: row.size_bytes,
+      trigger: row.trigger,
+      createdAt: row.created_at,
+      hasArchive: fileExists,
+      isAvailable: fileExists,
+    };
   }
 
   /**

@@ -4,6 +4,7 @@ import {
   HttpException,
   HttpStatus,
   InternalServerErrorException,
+  NotFoundException,
 } from '@nestjs/common';
 import Database from 'better-sqlite3';
 import { createHash } from 'node:crypto';
@@ -399,5 +400,185 @@ describe('BackupsService', () => {
     logSpy.mockRestore();
     errorSpy.mockRestore();
     warnSpy.mockRestore();
+  });
+
+  describe('findAll', () => {
+    it('returns empty collection with total 0 when no backups exist', async () => {
+      const result = await backupsService.findAll();
+      expect(result).toEqual({
+        items: [],
+        total: 0,
+        limit: 50,
+        offset: 0,
+      });
+    });
+
+    it('returns backups sorted newest first by default, with pagination and trigger filter', async () => {
+      // Seed 3 backups with distinct timestamps
+      const fakeArchive = path.join(testBackupTargetDir, 'dummy.tar.gz');
+      fs.writeFileSync(fakeArchive, 'dummy bytes');
+
+      dbService.run(
+        `INSERT INTO backups (id, file_path, size_bytes, trigger, created_at)
+         VALUES
+         ('018f3a9e-0000-7000-8000-000000000001', ?, 100, 'manual', '2026-11-10T10:00:00.000Z'),
+         ('018f3a9e-0000-7000-8000-000000000002', ?, 200, 'scheduled', '2026-11-12T10:00:00.000Z'),
+         ('018f3a9e-0000-7000-8000-000000000003', ?, 300, 'manual', '2026-11-15T10:00:00.000Z')`,
+        [fakeArchive, fakeArchive, fakeArchive],
+      );
+
+      // Default findAll should sort newest first (2026-11-15 first)
+      const listDefault = await backupsService.findAll();
+      expect(listDefault.total).toBe(3);
+      expect(listDefault.items).toHaveLength(3);
+      expect(listDefault.items[0].id).toBe(
+        '018f3a9e-0000-7000-8000-000000000003',
+      );
+      expect(listDefault.items[1].id).toBe(
+        '018f3a9e-0000-7000-8000-000000000002',
+      );
+      expect(listDefault.items[2].id).toBe(
+        '018f3a9e-0000-7000-8000-000000000001',
+      );
+
+      // Assert no item exposes file_path
+      for (const item of listDefault.items) {
+        expect((item as any).file_path).toBeUndefined();
+        expect((item as any).filePath).toBeUndefined();
+        expect(item.hasArchive).toBe(true);
+      }
+
+      // Test trigger filter: 'manual'
+      const manualOnly = await backupsService.findAll({
+        trigger: 'manual',
+      } as any);
+      expect(manualOnly.total).toBe(2);
+      expect(manualOnly.items.every((i) => i.trigger === 'manual')).toBe(true);
+
+      // Test trigger filter: 'scheduled'
+      const scheduledOnly = await backupsService.findAll({
+        trigger: 'scheduled',
+      } as any);
+      expect(scheduledOnly.total).toBe(1);
+      expect(scheduledOnly.items[0].id).toBe(
+        '018f3a9e-0000-7000-8000-000000000002',
+      );
+
+      // Test pagination: limit 1, offset 1
+      const paginated = await backupsService.findAll({
+        limit: 1,
+        offset: 1,
+      } as any);
+      expect(paginated.total).toBe(3);
+      expect(paginated.limit).toBe(1);
+      expect(paginated.offset).toBe(1);
+      expect(paginated.items).toHaveLength(1);
+      expect(paginated.items[0].id).toBe(
+        '018f3a9e-0000-7000-8000-000000000002',
+      );
+
+      // Test invalid trigger filter throws BadRequestException
+      await expect(
+        backupsService.findAll({ trigger: 'invalid_trigger' as any } as any),
+      ).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  describe('findOne & findById', () => {
+    it('returns backup metadata and reports archive presence', async () => {
+      const backupResult = await backupsService.createBackup({
+        trigger: 'manual',
+        label: 'Retrieve Test',
+      });
+
+      const retrieved = await backupsService.findOne(backupResult.id);
+      expect(retrieved).toMatchObject({
+        id: backupResult.id,
+        trigger: 'manual',
+        sizeBytes: backupResult.sizeBytes,
+        createdAt: backupResult.createdAt,
+        hasArchive: true,
+        isAvailable: true,
+      });
+      expect((retrieved as any).file_path).toBeUndefined();
+      expect((retrieved as any).filePath).toBeUndefined();
+    });
+
+    it('reports hasArchive: false when the archive file is removed externally', async () => {
+      const backupResult = await backupsService.createBackup();
+      const row = dbService.get<{ file_path: string }>(
+        'SELECT file_path FROM backups WHERE id = ?',
+        [backupResult.id],
+      );
+
+      // Remove archive file on disk externally
+      fs.unlinkSync(row!.file_path);
+
+      const retrieved = await backupsService.findOne(backupResult.id);
+      expect(retrieved.id).toBe(backupResult.id);
+      expect(retrieved.hasArchive).toBe(false);
+      expect(retrieved.isAvailable).toBe(false);
+    });
+
+    it('throws NotFoundException (404) when retrieving unknown ID', async () => {
+      await expect(
+        backupsService.findOne('018f3a9e-0000-7000-8000-000000000999'),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('returns null from findById when unknown ID is queried', async () => {
+      const found = await backupsService.findById(
+        '018f3a9e-0000-7000-8000-000000000999',
+      );
+      expect(found).toBeNull();
+    });
+  });
+
+  describe('deleteBackup', () => {
+    it('removes both the database row and the archive file from disk', async () => {
+      const backupResult = await backupsService.createBackup();
+      const row = dbService.get<{ file_path: string }>(
+        'SELECT file_path FROM backups WHERE id = ?',
+        [backupResult.id],
+      );
+      expect(fs.existsSync(row!.file_path)).toBe(true);
+
+      await backupsService.deleteBackup(backupResult.id);
+
+      // Verify row is deleted
+      const checkRow = dbService.get('SELECT * FROM backups WHERE id = ?', [
+        backupResult.id,
+      ]);
+      expect(checkRow).toBeUndefined();
+
+      // Verify file is unlinked from disk
+      expect(fs.existsSync(row!.file_path)).toBe(false);
+    });
+
+    it('succeeds and removes database row when archive file is already missing on disk', async () => {
+      const backupResult = await backupsService.createBackup();
+      const row = dbService.get<{ file_path: string }>(
+        'SELECT file_path FROM backups WHERE id = ?',
+        [backupResult.id],
+      );
+
+      // Manually delete file before calling deleteBackup
+      fs.unlinkSync(row!.file_path);
+      expect(fs.existsSync(row!.file_path)).toBe(false);
+
+      await backupsService.deleteBackup(backupResult.id);
+
+      // Verify row was removed cleanly
+      const checkRow = dbService.get('SELECT * FROM backups WHERE id = ?', [
+        backupResult.id,
+      ]);
+      expect(checkRow).toBeUndefined();
+    });
+
+    it('throws NotFoundException (404) when deleting unknown backup ID', async () => {
+      await expect(
+        backupsService.deleteBackup('018f3a9e-0000-7000-8000-000000000999'),
+      ).rejects.toThrow(NotFoundException);
+    });
   });
 });
