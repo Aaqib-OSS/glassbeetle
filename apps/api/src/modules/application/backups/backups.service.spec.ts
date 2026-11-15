@@ -133,10 +133,12 @@ describe('BackupsService', () => {
     expect(backupRow?.id).toBe(result.id);
     expect(backupRow?.trigger).toBe('manual');
     expect(backupRow?.size_bytes).toBe(result.sizeBytes);
-    expect(fs.existsSync(backupRow!.file_path)).toBe(true);
+
+    const archivePath = path.join(testDataDir, 'backups', backupRow!.file_path);
+    expect(fs.existsSync(archivePath)).toBe(true);
 
     // Assert size_bytes matches actual file on disk
-    const diskStat = await fs.promises.stat(backupRow!.file_path);
+    const diskStat = await fs.promises.stat(archivePath);
     expect(diskStat.size).toBe(result.sizeBytes);
 
     // 6. Inspect archive contents
@@ -144,7 +146,7 @@ describe('BackupsService', () => {
     fs.mkdirSync(extractDir, { recursive: true });
 
     await tar.x({
-      file: backupRow!.file_path,
+      file: archivePath,
       cwd: extractDir,
     });
 
@@ -230,8 +232,47 @@ describe('BackupsService', () => {
       'SELECT file_path FROM backups WHERE id = ?',
       [result.id],
     );
-    expect(backupRow?.file_path.startsWith(testBackupTargetDir)).toBe(true);
-    expect(fs.existsSync(backupRow!.file_path)).toBe(true);
+    expect(backupRow?.file_path).toBe(`backup-${result.id}.tar.gz`);
+    expect(path.isAbsolute(backupRow!.file_path)).toBe(false);
+    expect(backupRow!.file_path).not.toMatch(/[\\/]/);
+    expect(
+      fs.existsSync(path.join(testBackupTargetDir, backupRow!.file_path)),
+    ).toBe(true);
+  });
+
+  it('stores only the archive filename in file_path', async () => {
+    const result = await backupsService.createBackup();
+    const row = dbService.get<{ file_path: string }>(
+      'SELECT file_path FROM backups WHERE id = ?',
+      [result.id],
+    );
+
+    expect(row?.file_path).toBe(`backup-${result.id}.tar.gz`);
+    expect(path.isAbsolute(row!.file_path)).toBe(false);
+    expect(row!.file_path).not.toMatch(/[\\/]/);
+  });
+
+  it('resolves legacy absolute file_path values against the target directory', async () => {
+    const id = '018f3a9e-0000-7000-8000-000000000123';
+    const legacyPath = path.join(testBackupTargetDir, `backup-${id}.tar.gz`);
+    fs.writeFileSync(legacyPath, 'legacy archive bytes');
+
+    dbService.run(
+      'UPDATE backup_policy SET target_directory = ?, updated_at = ? WHERE id = 1',
+      [testBackupTargetDir, nowIso()],
+    );
+    dbService.run(
+      `INSERT INTO backups (id, file_path, size_bytes, trigger, created_at)
+       VALUES (?, ?, ?, 'manual', ?)`,
+      [id, legacyPath, 20, nowIso()],
+    );
+
+    const found = await backupsService.findOne(id);
+    expect(found.hasArchive).toBe(true);
+    expect(found.isAvailable).toBe(true);
+
+    await backupsService.deleteBackup(id);
+    expect(fs.existsSync(legacyPath)).toBe(false);
   });
 
   it('serialises backups and throws 409 Conflict when a backup is already in progress', async () => {
@@ -274,7 +315,7 @@ describe('BackupsService', () => {
     fs.mkdirSync(extractDir, { recursive: true });
 
     await tar.x({
-      file: backupRow!.file_path,
+      file: path.join(testDataDir, 'backups', backupRow!.file_path),
       cwd: extractDir,
     });
 
@@ -414,6 +455,11 @@ describe('BackupsService', () => {
     });
 
     it('returns backups sorted newest first by default, with pagination and trigger filter', async () => {
+      dbService.run(
+        'UPDATE backup_policy SET target_directory = ?, updated_at = ? WHERE id = 1',
+        [testBackupTargetDir, nowIso()],
+      );
+
       // Seed 3 backups with distinct timestamps
       const fakeArchive = path.join(testBackupTargetDir, 'dummy.tar.gz');
       fs.writeFileSync(fakeArchive, 'dummy bytes');
@@ -512,7 +558,7 @@ describe('BackupsService', () => {
       );
 
       // Remove archive file on disk externally
-      fs.unlinkSync(row!.file_path);
+      fs.unlinkSync(path.join(testDataDir, 'backups', row!.file_path));
 
       const retrieved = await backupsService.findOne(backupResult.id);
       expect(retrieved.id).toBe(backupResult.id);
@@ -541,7 +587,8 @@ describe('BackupsService', () => {
         'SELECT file_path FROM backups WHERE id = ?',
         [backupResult.id],
       );
-      expect(fs.existsSync(row!.file_path)).toBe(true);
+      const archivePath = path.join(testDataDir, 'backups', row!.file_path);
+      expect(fs.existsSync(archivePath)).toBe(true);
 
       await backupsService.deleteBackup(backupResult.id);
 
@@ -552,7 +599,7 @@ describe('BackupsService', () => {
       expect(checkRow).toBeUndefined();
 
       // Verify file is unlinked from disk
-      expect(fs.existsSync(row!.file_path)).toBe(false);
+      expect(fs.existsSync(archivePath)).toBe(false);
     });
 
     it('succeeds and removes database row when archive file is already missing on disk', async () => {
@@ -563,8 +610,9 @@ describe('BackupsService', () => {
       );
 
       // Manually delete file before calling deleteBackup
-      fs.unlinkSync(row!.file_path);
-      expect(fs.existsSync(row!.file_path)).toBe(false);
+      const archivePath = path.join(testDataDir, 'backups', row!.file_path);
+      fs.unlinkSync(archivePath);
+      expect(fs.existsSync(archivePath)).toBe(false);
 
       await backupsService.deleteBackup(backupResult.id);
 
