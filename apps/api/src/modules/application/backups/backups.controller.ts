@@ -1,18 +1,38 @@
-import { Body, Controller, HttpCode, HttpStatus, Post } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Param,
+  Post,
+  Query,
+} from '@nestjs/common';
 import {
   ApiBadRequestResponse,
   ApiBody,
   ApiConflictResponse,
   ApiCreatedResponse,
   ApiInternalServerErrorResponse,
+  ApiNoContentResponse,
+  ApiNotFoundResponse,
+  ApiOkResponse,
   ApiOperation,
+  ApiParam,
   ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
 import { ApiErrorResponseDto } from '../../../common/http/api-error.js';
+import { ParseUuidV7Pipe } from '../../../common/identifiers/index.js';
+import { type PaginatedResponse } from '../../../common/pagination/paginated-response.dto.js';
 import { BackupsService } from './backups.service.js';
-import { BackupResponseDto } from './dto/backup-response.dto.js';
-import { CreateBackupDto } from './dto/create-backup.dto.js';
+import {
+  BackupResponseDto,
+  CreateBackupDto,
+  ListBackupsQueryDto,
+  PaginatedBackupsResponseDto,
+} from './dto/index.js';
 
 /**
  * Controller exposing `/application/backups`.
@@ -77,5 +97,99 @@ Concurrency: simultaneous backups are disallowed; concurrent requests receive \`
       label: dto?.label,
       note: dto?.note,
     });
+  }
+
+  /**
+   * `GET /application/backups` — list backup archives.
+   *
+   * Returns a paginated list of backups, sorted newest first by default.
+   */
+  @Get()
+  @ApiOperation({
+    summary: 'List backup archives',
+    description:
+      'Retrieves stored backup records with pagination, sorting, and trigger filtering. Sorted newest first by default. Never exposes raw filesystem paths.',
+  })
+  @ApiOkResponse({
+    description: 'Paginated list of backup archives',
+    type: PaginatedBackupsResponseDto,
+  })
+  @ApiBadRequestResponse({
+    description: 'Invalid pagination, sorting, or trigger filter parameters',
+    type: ApiErrorResponseDto,
+  })
+  async findAll(
+    @Query() query: ListBackupsQueryDto,
+  ): Promise<PaginatedResponse<BackupResponseDto>> {
+    return this.backupsService.findAll(query);
+  }
+
+  /**
+   * `GET /application/backups/:backupId` — retrieve a single backup's metadata.
+   *
+   * Returns metadata and reports whether the archive is physically present on disk.
+   */
+  @Get(':backupId')
+  @ApiOperation({
+    summary: 'Retrieve backup metadata',
+    description:
+      'Retrieves metadata for a single backup archive. Reports whether the archive file currently exists on disk without exposing filesystem paths.',
+  })
+  @ApiParam({
+    name: 'backupId',
+    description: 'Unique backup identifier (UUIDv7)',
+    example: '018f3a9e-0000-7000-8000-000000000001',
+  })
+  @ApiOkResponse({
+    description: 'Backup metadata retrieved successfully',
+    type: BackupResponseDto,
+  })
+  @ApiBadRequestResponse({
+    description: 'backupId is not a valid UUIDv7 identifier',
+    type: ApiErrorResponseDto,
+  })
+  @ApiNotFoundResponse({
+    description: 'No backup found with that ID',
+    type: ApiErrorResponseDto,
+  })
+  async findOne(
+    @Param('backupId', ParseUuidV7Pipe) backupId: string,
+  ): Promise<BackupResponseDto> {
+    return this.backupsService.findOne(backupId);
+  }
+
+  /**
+   * `DELETE /application/backups/:backupId` — delete a backup archive.
+   *
+   * Removes both the database record and the physical archive file on disk.
+   * Irreversible; does not affect active application data.
+   */
+  @Delete(':backupId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({
+    summary: 'Delete a backup archive',
+    description:
+      'Permanently deletes the backup database record and removes the archive file from disk. Deletion is irreversible and does not affect the active database or current application data.',
+  })
+  @ApiParam({
+    name: 'backupId',
+    description: 'Unique backup identifier (UUIDv7)',
+    example: '018f3a9e-0000-7000-8000-000000000001',
+  })
+  @ApiNoContentResponse({
+    description: 'Backup record and archive file successfully deleted',
+  })
+  @ApiBadRequestResponse({
+    description: 'backupId is not a valid UUIDv7 identifier',
+    type: ApiErrorResponseDto,
+  })
+  @ApiNotFoundResponse({
+    description: 'No backup found with that ID',
+    type: ApiErrorResponseDto,
+  })
+  async remove(
+    @Param('backupId', ParseUuidV7Pipe) backupId: string,
+  ): Promise<void> {
+    await this.backupsService.deleteBackup(backupId);
   }
 }

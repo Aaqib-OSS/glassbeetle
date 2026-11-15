@@ -1,4 +1,4 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 /**
  * Valid triggers for initiating a backup.
@@ -11,11 +11,13 @@ export const BACKUP_TRIGGERS = ['manual', 'scheduled'] as const;
 export type BackupTrigger = (typeof BACKUP_TRIGGERS)[number];
 
 /**
- * Public metadata for a completed backup archive.
+ * Public metadata for a backup archive.
  *
  * Local filesystem paths (`file_path`) are deliberately omitted: exposing
  * host file paths leaks filesystem layout and user directory structure
- * into API responses (see `docs/api-conventions.md`).
+ * into API responses (see `docs/api-conventions.md`). Instead, `hasArchive`
+ * and `isAvailable` report whether the archive file is currently present
+ * on disk.
  */
 export class BackupResponseDto {
   @ApiProperty({
@@ -42,5 +44,17 @@ export class BackupResponseDto {
     example: '2026-11-15T21:44:41.000Z',
   })
   readonly createdAt!: string;
-}
 
+  @ApiProperty({
+    description: 'Whether the backup archive file currently exists on disk',
+    example: true,
+  })
+  readonly hasArchive!: boolean;
+
+  @ApiPropertyOptional({
+    description:
+      'Alias for hasArchive: whether the archive file exists and is available',
+    example: true,
+  })
+  readonly isAvailable?: boolean;
+}

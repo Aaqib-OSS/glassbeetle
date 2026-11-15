@@ -46,6 +46,16 @@ export interface BackupRecordRow {
 }
 
 /**
+ * Whitelist of client-facing sort keys mapped to SQLite column names in `backups`.
+ */
+export const ALLOWED_BACKUP_SORT_COLUMNS: Record<string, string> = {
+  createdAt: 'created_at',
+  sizeBytes: 'size_bytes',
+  id: 'id',
+  trigger: 'trigger',
+};
+
+/**
  * Options accepted by {@link BackupsService.createBackup}.
  */
 export interface CreateBackupOptions {
@@ -56,4 +66,3 @@ export interface CreateBackupOptions {
   /** Optional context note */
   readonly note?: string;
 }
-
