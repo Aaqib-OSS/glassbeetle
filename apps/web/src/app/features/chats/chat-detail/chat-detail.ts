@@ -143,12 +143,16 @@ export class ChatDetail {
   private readonly runs = inject(ChatRunsService);
   private readonly models = inject(ModelCatalogService);
   private readonly injector = inject(Injector);
+  private readonly destroyRef = inject(DestroyRef);
   private readonly dialog = inject(MatDialog);
   private readonly notify = inject(NotificationService);
   private readonly router = inject(Router);
   private readonly roster = inject(AgentRosterService);
   protected readonly conversations = inject(ConversationsService);
   protected readonly user = inject(UserProfileService);
+
+  private destroyed = false;
+  private stopTimer: ReturnType<typeof setTimeout> | null = null;
 
   /** Bound from the route (`withComponentInputBinding`). */
   readonly chatId = input.required<string>();
@@ -470,7 +474,7 @@ export class ChatDetail {
         // A run's turns are in what was just read, so nothing is held back.
         this.heldDrafts.set(this.running() ? (this.run()?.drafts ?? []) : []);
 
-        if (page) {
+        if (page && !this.destroyed) {
           this.scrollToLatest();
           // A conversation is opened to be continued, so the cursor goes
           // where the next turn is typed.
@@ -519,13 +523,20 @@ export class ChatDetail {
     effect(() => {
       const run = this.run();
 
-      if (run?.status === 'running') {
+      if (!this.destroyed && run?.status === 'running') {
         this.heldDrafts.set(run.drafts);
         untracked(() => this.followIfPinned());
       }
     });
 
-    inject(DestroyRef).onDestroy(() => this.runs.view(null));
+    this.destroyRef.onDestroy(() => {
+      this.destroyed = true;
+      if (this.stopTimer) {
+        clearTimeout(this.stopTimer);
+        this.stopTimer = null;
+      }
+      this.runs.view(null);
+    });
   }
 
   protected load(chatId: string): void {
@@ -611,6 +622,9 @@ export class ChatDetail {
    * whether the run stored one turn, several, or none before failing.
    */
   private async afterRun(stopped: boolean): Promise<void> {
+    if (this.destroyed) {
+      return;
+    }
     const chatId = this.chatId();
     // Rows the run opened may already be in hand, still empty; they are read
     // again rather than trusted.
@@ -622,7 +636,16 @@ export class ChatDetail {
       if (stopped) {
         // Stopping closes the connection; the API notices, then writes down
         // what had been generated. Reading at once would beat it to the row.
-        await new Promise((resolve) => setTimeout(resolve, STOP_SETTLE_MS));
+        await new Promise<void>((resolve) => {
+          this.stopTimer = setTimeout(() => {
+            this.stopTimer = null;
+            resolve();
+          }, STOP_SETTLE_MS);
+        });
+      }
+
+      if (this.destroyed || this.chatId() !== chatId) {
+        return;
       }
 
       const page = await firstValueFrom(
@@ -633,7 +656,7 @@ export class ChatDetail {
         }),
       );
 
-      if (this.chatId() !== chatId) {
+      if (this.destroyed || this.chatId() !== chatId) {
         return;
       }
 
@@ -643,7 +666,7 @@ export class ChatDetail {
     } catch {
       // The drafts stay where they are; a reload reads the stored turns.
     } finally {
-      if (this.chatId() === chatId) {
+      if (!this.destroyed && this.chatId() === chatId) {
         if (!this.running()) {
           this.heldDrafts.set([]);
         }
@@ -688,7 +711,7 @@ export class ChatDetail {
 
       // Prepending moves everything down; without this the reader is thrown
       // back to a part of the conversation they were not looking at.
-      if (element) {
+      if (element && !this.destroyed) {
         afterNextRender(
           () => {
             element.scrollTop += element.scrollHeight - heightBefore;
@@ -720,13 +743,16 @@ export class ChatDetail {
   }
 
   private followIfPinned(): void {
-    if (this.pinned()) {
+    if (!this.destroyed && this.pinned()) {
       this.scrollToLatest();
     }
   }
 
   /** Puts the newest turn in view, which is where a conversation is read. */
   private scrollToLatest(): void {
+    if (this.destroyed) {
+      return;
+    }
     afterNextRender(
       () => {
         const element = this.scroller()?.nativeElement;

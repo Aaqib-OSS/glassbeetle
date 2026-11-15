@@ -220,6 +220,7 @@ const START: CompletionEvent = {
 
 describe('ChatDetail', () => {
   beforeEach(() => localStorage.clear());
+  afterEach(() => TestBed.resetTestingModule());
 
   it('shows the chat and names the agent it is held with, and what that agent runs on', () => {
     const { element } = setup();
