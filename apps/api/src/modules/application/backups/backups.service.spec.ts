@@ -275,6 +275,54 @@ describe('BackupsService', () => {
     expect(fs.existsSync(legacyPath)).toBe(false);
   });
 
+  it('resolves a backup through the storage root after that root moves to a different mount', async () => {
+    const result = await backupsService.createBackup();
+    const row = dbService.get<{ file_path: string }>(
+      'SELECT file_path FROM backups WHERE id = ?',
+      [result.id],
+    );
+
+    // The stored reference is relative, not the absolute path of the machine
+    // that produced the archive.
+    expect(path.isAbsolute(row!.file_path)).toBe(false);
+
+    // Simulate moving the storage root to a different mount: keep the backup
+    // under its backups bucket there, remove the original, and point a fresh
+    // service instance (with a fresh FileStorageService root) at the new mount.
+    const movedRoot = path.join(tempBaseDir, 'moved-mount');
+    const movedStorageRoot = path.join(movedRoot, 'storage');
+    const movedBackupDir = path.join(movedStorageRoot, 'backups');
+    fs.mkdirSync(movedBackupDir, { recursive: true });
+    fs.copyFileSync(
+      path.join(testDataDir, 'backups', row!.file_path),
+      path.join(movedBackupDir, row!.file_path),
+    );
+    fs.unlinkSync(path.join(testDataDir, 'backups', row!.file_path));
+
+    dbService.run(
+      'UPDATE backup_policy SET target_directory = ?, updated_at = ? WHERE id = 1',
+      [movedBackupDir, nowIso()],
+    );
+
+    const movedConfig = {
+      dataDir: movedRoot,
+      databasePath: path.join(movedRoot, 'test.db'),
+    } as AppConfigService;
+    const movedStorageService = new FileStorageService(movedConfig);
+    await movedStorageService.onModuleInit();
+    const movedBackupsService = new BackupsService(
+      dbService,
+      movedStorageService,
+      movedConfig,
+    );
+
+    expect(movedStorageService.storageRoot).toBe(movedStorageRoot);
+
+    const found = await movedBackupsService.findOne(result.id);
+    expect(found.hasArchive).toBe(true);
+    expect(found.isAvailable).toBe(true);
+  });
+
   it('serialises backups and throws 409 Conflict when a backup is already in progress', async () => {
     // Simulate active backup by setting flag
     (backupsService as any).isBackupInProgress = true;
