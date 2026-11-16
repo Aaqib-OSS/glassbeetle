@@ -127,9 +127,10 @@ export class BackupsService {
 
     try {
       const targetDir = this.resolveTargetDirectory();
+      const archiveFileName = `backup-${id}.tar.gz`;
       stagingDir = path.join(os.tmpdir(), `glassbeetle-backup-${id}`);
-      partialArchivePath = path.join(targetDir, `backup-${id}.tar.gz.tmp`);
-      finalArchivePath = path.join(targetDir, `backup-${id}.tar.gz`);
+      partialArchivePath = path.join(targetDir, `${archiveFileName}.tmp`);
+      finalArchivePath = path.join(targetDir, archiveFileName);
 
       this.checkDiskSpace(targetDir);
 
@@ -189,7 +190,7 @@ export class BackupsService {
       this.databaseService.run(
         `INSERT INTO backups (id, file_path, size_bytes, trigger, created_at)
          VALUES (?, ?, ?, ?, ?)`,
-        [id, finalArchivePath, sizeBytes, trigger, createdAt],
+        [id, archiveFileName, sizeBytes, trigger, createdAt],
       );
 
       this.logger.log(
@@ -377,12 +378,13 @@ export class BackupsService {
     // 2. Unlink archive file
     if (row.file_path) {
       try {
-        if (existsSync(row.file_path)) {
-          fs.unlinkSync(row.file_path);
-          this.logger.log(`Deleted backup archive file: ${row.file_path}`);
+        const archivePath = this.archivePathFor(row);
+        if (existsSync(archivePath)) {
+          fs.unlinkSync(archivePath);
+          this.logger.log(`Deleted backup archive file: ${archivePath}`);
         } else {
           this.logger.warn(
-            `Backup archive file was already missing on disk: ${row.file_path}`,
+            `Backup archive file was already missing on disk: ${archivePath}`,
           );
         }
       } catch (unlinkError) {
@@ -402,7 +404,9 @@ export class BackupsService {
   private mapRowToResponse(row: BackupRecordRow): BackupResponseDto {
     let fileExists = false;
     try {
-      fileExists = Boolean(row.file_path && existsSync(row.file_path));
+      fileExists = Boolean(
+        row.file_path && existsSync(this.archivePathFor(row)),
+      );
     } catch {
       fileExists = false;
     }
@@ -415,6 +419,19 @@ export class BackupsService {
       hasArchive: fileExists,
       isAvailable: fileExists,
     };
+  }
+
+  /**
+   * Resolves the on-disk archive path for a backup row.
+   *
+   * `file_path` stores the archive filename. Legacy rows may hold an absolute
+   * path, so only its basename is resolved against the target directory.
+   */
+  private archivePathFor(row: BackupRecordRow): string {
+    return path.join(
+      this.resolveTargetDirectory(),
+      path.basename(row.file_path),
+    );
   }
 
   /**

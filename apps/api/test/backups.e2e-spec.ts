@@ -58,12 +58,16 @@ describe('Backups endpoints (e2e)', () => {
       expect(row).toBeDefined();
       expect(row?.trigger).toBe('manual');
       expect(row?.size_bytes).toBe(response.body.sizeBytes);
-      expect(fs.existsSync(row!.file_path)).toBe(true);
+      expect(row?.file_path).toBe(`backup-${response.body.id}.tar.gz`);
+      expect(row!.file_path).not.toMatch(/[\\/]/);
+
+      const archivePath = path.join(os.tmpdir(), 'backups', row!.file_path);
+      expect(fs.existsSync(archivePath)).toBe(true);
 
       // Verify archive contains manifest, database and files
       const entries: string[] = [];
       await tar.t({
-        file: row!.file_path,
+        file: archivePath,
         onentry: (entry) => entries.push(entry.path),
       });
 
@@ -134,7 +138,8 @@ describe('Backups endpoints (e2e)', () => {
     });
 
     it('returns backups sorted newest first by default, with pagination and trigger filter', async () => {
-      const tempArchive = path.join(os.tmpdir(), 'dummy.tar.gz');
+      const tempArchive = path.join(os.tmpdir(), 'backups', 'dummy.tar.gz');
+      fs.mkdirSync(path.dirname(tempArchive), { recursive: true });
       fs.writeFileSync(tempArchive, 'dummy bytes');
 
       testApp.db.run(
@@ -240,7 +245,7 @@ describe('Backups endpoints (e2e)', () => {
       );
 
       // Unlink archive file externally
-      fs.unlinkSync(row!.file_path);
+      fs.unlinkSync(path.join(os.tmpdir(), 'backups', row!.file_path));
 
       const retrieveRes = await testApp
         .request()
@@ -278,7 +283,8 @@ describe('Backups endpoints (e2e)', () => {
         'SELECT file_path FROM backups WHERE id = ?',
         [createRes.body.id],
       );
-      expect(fs.existsSync(row!.file_path)).toBe(true);
+      const archivePath = path.join(os.tmpdir(), 'backups', row!.file_path);
+      expect(fs.existsSync(archivePath)).toBe(true);
 
       await testApp
         .request()
@@ -292,7 +298,7 @@ describe('Backups endpoints (e2e)', () => {
       expect(checkRow).toBeUndefined();
 
       // Verify file is gone
-      expect(fs.existsSync(row!.file_path)).toBe(false);
+      expect(fs.existsSync(archivePath)).toBe(false);
     });
 
     it('succeeds with 204 and removes database row when archive file was already removed externally', async () => {
@@ -307,8 +313,9 @@ describe('Backups endpoints (e2e)', () => {
       );
 
       // Manually remove file first
-      fs.unlinkSync(row!.file_path);
-      expect(fs.existsSync(row!.file_path)).toBe(false);
+      const archivePath = path.join(os.tmpdir(), 'backups', row!.file_path);
+      fs.unlinkSync(archivePath);
+      expect(fs.existsSync(archivePath)).toBe(false);
 
       await testApp
         .request()
