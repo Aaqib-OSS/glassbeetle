@@ -225,7 +225,10 @@ export class ProvidersService {
     );
 
     if (!existing) {
-      throw new NotFoundException(`Provider '${id}' not found`);
+      throw new NotFoundException({
+        code: 'PROVIDER_NOT_FOUND',
+        message: `Provider '${id}' not found`,
+      });
     }
 
     this.db.run('DELETE FROM providers WHERE id = ?', [id]);
@@ -243,7 +246,10 @@ export class ProvidersService {
     );
 
     if (!row) {
-      throw new NotFoundException(`Provider '${id}' not found`);
+      throw new NotFoundException({
+        code: 'PROVIDER_NOT_FOUND',
+        message: `Provider '${id}' not found`,
+      });
     }
 
     return mapRow(row);

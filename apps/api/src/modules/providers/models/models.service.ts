@@ -285,7 +285,10 @@ export class ModelsService {
       [providerId],
     );
     if (!provider) {
-      throw new NotFoundException(`Provider '${providerId}' not found`);
+      throw new NotFoundException({
+        code: 'PROVIDER_NOT_FOUND',
+        message: `Provider '${providerId}' not found`,
+      });
     }
 
     const isLocalOrCustom = LOCAL_OR_CUSTOM_KINDS.has(
@@ -679,7 +682,10 @@ export class ModelsService {
       [id],
     );
     if (!row) {
-      throw new NotFoundException(`Model '${id}' not found`);
+      throw new NotFoundException({
+        code: 'MODEL_NOT_FOUND',
+        message: `Model '${id}' not found`,
+      });
     }
     return mapModelRow(row);
   }
@@ -712,7 +718,10 @@ export class ModelsService {
       [id],
     );
     if (!existing) {
-      throw new NotFoundException(`Model '${id}' not found`);
+      throw new NotFoundException({
+        code: 'MODEL_NOT_FOUND',
+        message: `Model '${id}' not found`,
+      });
     }
 
     const setClauses: string[] = [];
@@ -749,7 +758,10 @@ export class ModelsService {
         [...setParams, id],
       );
       if (result.changes === 0) {
-        throw new NotFoundException(`Model '${id}' not found`);
+        throw new NotFoundException({
+          code: 'MODEL_NOT_FOUND',
+          message: `Model '${id}' not found`,
+        });
       }
     }
 
@@ -775,7 +787,10 @@ export class ModelsService {
       [id],
     );
     if (!existing) {
-      throw new NotFoundException(`Model '${id}' not found`);
+      throw new NotFoundException({
+        code: 'MODEL_NOT_FOUND',
+        message: `Model '${id}' not found`,
+      });
     }
 
     const dependentAgents = this.db.get<{ count: number }>(
@@ -791,7 +806,10 @@ export class ModelsService {
 
     const result = this.db.run('DELETE FROM models WHERE id = ?', [id]);
     if (result.changes === 0) {
-      throw new NotFoundException(`Model '${id}' not found`);
+      throw new NotFoundException({
+        code: 'MODEL_NOT_FOUND',
+        message: `Model '${id}' not found`,
+      });
     }
   }
 
@@ -806,7 +824,10 @@ export class ModelsService {
       [providerId],
     );
     if (!provider) {
-      throw new NotFoundException(`Provider '${providerId}' not found`);
+      throw new NotFoundException({
+        code: 'PROVIDER_NOT_FOUND',
+        message: `Provider '${providerId}' not found`,
+      });
     }
   }
 
@@ -820,7 +841,10 @@ export class ModelsService {
       id,
     ]);
     if (!row) {
-      throw new NotFoundException(`Model '${id}' not found`);
+      throw new NotFoundException({
+        code: 'MODEL_NOT_FOUND',
+        message: `Model '${id}' not found`,
+      });
     }
     return mapModelRow(row);
   }

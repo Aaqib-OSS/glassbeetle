@@ -810,4 +810,70 @@ describe('ModelsService', () => {
       expect(() => service.delete('m1')).toThrow(NotFoundException);
     });
   });
+
+  describe('domain error codes for missing rows', () => {
+    const providerMissing = expect.objectContaining({
+      response: expect.objectContaining({ code: 'PROVIDER_NOT_FOUND' }),
+    });
+    const modelMissing = expect.objectContaining({
+      response: expect.objectContaining({ code: 'MODEL_NOT_FOUND' }),
+    });
+
+    it('listByProvider answers PROVIDER_NOT_FOUND', () => {
+      mockDb.get.mockReturnValueOnce(undefined);
+      expect(() =>
+        service.listByProvider(providerId, { limit: 50, offset: 0 }),
+      ).toThrow(providerMissing);
+    });
+
+    it('createManual answers PROVIDER_NOT_FOUND', () => {
+      mockDb.get.mockReturnValueOnce(undefined);
+      expect(() =>
+        service.createManual(providerId, {
+          modelIdentifier: 'm',
+          displayName: 'M',
+        } as RegisterModelDto),
+      ).toThrow(providerMissing);
+    });
+
+    it('discover answers PROVIDER_NOT_FOUND', async () => {
+      mockDb.get.mockReturnValueOnce(undefined);
+      await expect(service.discover(providerId)).rejects.toMatchObject({
+        response: { code: 'PROVIDER_NOT_FOUND' },
+      });
+    });
+
+    it('findOne answers MODEL_NOT_FOUND', () => {
+      mockDb.get.mockReturnValueOnce(undefined);
+      expect(() => service.findOne('ghost')).toThrow(modelMissing);
+    });
+
+    it('update answers MODEL_NOT_FOUND when the row is missing', () => {
+      mockDb.get.mockReturnValueOnce(undefined);
+      expect(() => service.update('ghost', { displayName: 'X' })).toThrow(
+        modelMissing,
+      );
+    });
+
+    it('update answers MODEL_NOT_FOUND when the row vanishes before the UPDATE', () => {
+      mockDb.get.mockReturnValueOnce(makeModelRow({ id: 'm1' }));
+      mockDb.run.mockReturnValueOnce({ changes: 0, lastInsertRowid: 0 });
+      expect(() => service.update('m1', { displayName: 'X' })).toThrow(
+        modelMissing,
+      );
+    });
+
+    it('delete answers MODEL_NOT_FOUND when the row is missing', () => {
+      mockDb.get.mockReturnValueOnce(undefined);
+      expect(() => service.delete('ghost')).toThrow(modelMissing);
+    });
+
+    it('delete answers MODEL_NOT_FOUND when the row vanishes before the DELETE', () => {
+      mockDb.get
+        .mockReturnValueOnce(makeModelRow({ id: 'm1' }))
+        .mockReturnValueOnce({ count: 0 });
+      mockDb.run.mockReturnValueOnce({ changes: 0, lastInsertRowid: 0 });
+      expect(() => service.delete('m1')).toThrow(modelMissing);
+    });
+  });
 });

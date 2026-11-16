@@ -326,7 +326,7 @@ describe('Global models endpoints (e2e)', () => {
         .expect(404);
 
       expect(res.body.statusCode).toBe(404);
-      expect(res.body.code).toBe('NOT_FOUND');
+      expect(res.body.code).toBe('MODEL_NOT_FOUND');
       expect(res.body.message).toContain(unknownModelId);
     });
   });
@@ -577,7 +577,7 @@ describe('Global models endpoints (e2e)', () => {
         .expect(404);
 
       expect(res.body.statusCode).toBe(404);
-      expect(res.body.code).toBe('NOT_FOUND');
+      expect(res.body.code).toBe('MODEL_NOT_FOUND');
     });
   });
 
@@ -613,7 +613,7 @@ describe('Global models endpoints (e2e)', () => {
         .expect(404);
 
       expect(res.body.statusCode).toBe(404);
-      expect(res.body.code).toBe('NOT_FOUND');
+      expect(res.body.code).toBe('MODEL_NOT_FOUND');
     });
 
     it('leaves dependent agents intact with model_id set to null (ON DELETE SET NULL)', async () => {

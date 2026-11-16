@@ -81,6 +81,11 @@ describe('CredentialsService', () => {
       expect(() =>
         service.set('unknown-provider', { apiKey: 'sk-12345' }),
       ).toThrow(NotFoundException);
+      expect(() =>
+        service.set('unknown-provider', { apiKey: 'sk-12345' }),
+      ).toThrow(
+        expect.objectContaining({ response: expect.objectContaining({ code: 'PROVIDER_NOT_FOUND' }) }),
+      );
     });
 
     it('throws BadRequestException when secret is empty', () => {

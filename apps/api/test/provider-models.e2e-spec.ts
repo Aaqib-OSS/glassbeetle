@@ -29,7 +29,7 @@ describe('Provider models endpoints (e2e)', () => {
         .expect(404);
 
       expect(res.body.statusCode).toBe(404);
-      expect(res.body.code).toBe('NOT_FOUND');
+      expect(res.body.code).toBe('PROVIDER_NOT_FOUND');
       expect(res.body.message).toContain(unknownProviderId);
     });
 
@@ -44,7 +44,7 @@ describe('Provider models endpoints (e2e)', () => {
         .expect(404);
 
       expect(res.body.statusCode).toBe(404);
-      expect(res.body.code).toBe('NOT_FOUND');
+      expect(res.body.code).toBe('PROVIDER_NOT_FOUND');
       expect(res.body.message).toContain(unknownProviderId);
     });
   });

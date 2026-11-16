@@ -289,6 +289,9 @@ describe('ProvidersService.findOne', () => {
     mockDb.get.mockReturnValue(undefined);
 
     expect(() => service.findOne('ghost')).toThrow(NotFoundException);
+    expect(() => service.findOne('ghost')).toThrow(
+      expect.objectContaining({ response: expect.objectContaining({ code: 'PROVIDER_NOT_FOUND' }) }),
+    );
   });
 });
 
@@ -312,6 +315,9 @@ describe('ProvidersService.update', () => {
     mockDb.get.mockReturnValue(undefined);
 
     expect(() => service.update('ghost', { name: 'X' })).toThrow(NotFoundException);
+    expect(() => service.update('ghost', { name: 'X' })).toThrow(
+      expect.objectContaining({ response: expect.objectContaining({ code: 'PROVIDER_NOT_FOUND' }) }),
+    );
   });
 
   it('throws BadRequestException when switching to ollama without baseUrl', () => {
@@ -372,6 +378,9 @@ describe('ProvidersService.remove', () => {
     mockDb.get.mockReturnValue(undefined);
 
     expect(() => service.remove('ghost')).toThrow(NotFoundException);
+    expect(() => service.remove('ghost')).toThrow(
+      expect.objectContaining({ response: expect.objectContaining({ code: 'PROVIDER_NOT_FOUND' }) }),
+    );
   });
 });
 

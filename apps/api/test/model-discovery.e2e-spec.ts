@@ -50,7 +50,7 @@ describe('Model discovery endpoint (POST /api/v1/providers/:providerId/models/di
         .expect(404);
 
       expect(res.body.statusCode).toBe(404);
-      expect(res.body.code).toBe('NOT_FOUND');
+      expect(res.body.code).toBe('PROVIDER_NOT_FOUND');
       expect(res.body.message).toContain(unknownProviderId);
     });
   });

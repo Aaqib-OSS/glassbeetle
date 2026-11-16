@@ -212,7 +212,10 @@ export class CredentialsService {
     );
 
     if (!provider) {
-      throw new NotFoundException(`Provider '${providerId}' not found`);
+      throw new NotFoundException({
+        code: 'PROVIDER_NOT_FOUND',
+        message: `Provider '${providerId}' not found`,
+      });
     }
   }
 }
