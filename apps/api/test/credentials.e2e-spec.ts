@@ -29,7 +29,7 @@ describe('Provider credentials endpoints (e2e)', () => {
         .expect(404);
 
       expect(res.body.statusCode).toBe(404);
-      expect(res.body.code).toBe('NOT_FOUND');
+      expect(res.body.code).toBe('PROVIDER_NOT_FOUND');
     });
 
     it('PUT /api/v1/providers/:providerId/credential returns 404 for unknown provider', async () => {
@@ -40,7 +40,7 @@ describe('Provider credentials endpoints (e2e)', () => {
         .expect(404);
 
       expect(res.body.statusCode).toBe(404);
-      expect(res.body.code).toBe('NOT_FOUND');
+      expect(res.body.code).toBe('PROVIDER_NOT_FOUND');
     });
 
     it('DELETE /api/v1/providers/:providerId/credential returns 404 for unknown provider', async () => {
@@ -50,7 +50,7 @@ describe('Provider credentials endpoints (e2e)', () => {
         .expect(404);
 
       expect(res.body.statusCode).toBe(404);
-      expect(res.body.code).toBe('NOT_FOUND');
+      expect(res.body.code).toBe('PROVIDER_NOT_FOUND');
     });
   });
 
