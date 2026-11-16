@@ -184,6 +184,25 @@ export class ProvidersService {
     const newIsLocal = deriveIsLocal(newKind, dto.isLocal ?? existing.isLocal);
     const newEnabled = dto.enabled ?? existing.enabled;
     const newName = dto.name ?? existing.name;
+
+    // A request that resolves to the row already stored is a no-op. Writing it
+    // back anyway would move `updated_at` for a change nobody made, and that
+    // column is read: the Overview's activity panel is assembled from it, and
+    // `?sort=updatedAt` orders by it.
+    //
+    // The merge above still runs first, so `assertBaseUrl` judges the
+    // resulting provider whether or not anything changed — an invalid
+    // combination is rejected rather than quietly treated as a no-op.
+    if (
+      newName === existing.name &&
+      newKind === existing.kind &&
+      newIsLocal === existing.isLocal &&
+      newBaseUrl === existing.baseUrl &&
+      newEnabled === existing.enabled
+    ) {
+      return existing;
+    }
+
     const now = nowIso();
 
     this.db.run(

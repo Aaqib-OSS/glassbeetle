@@ -362,6 +362,59 @@ describe('Global models endpoints (e2e)', () => {
       expect(updatedRow?.updated_at).toBe(res.body.updatedAt);
     });
 
+    it('leaves updated_at alone when every field already holds the sent value', async () => {
+      const p = testApp.fixtures.createProvider();
+      const m = testApp.fixtures.createModel({
+        provider_id: p.id,
+        display_name: 'Steady',
+        context_window: 128000,
+        default_temperature: 0.7,
+        default_max_tokens: 4096,
+        enabled: 1,
+        updated_at: '2026-01-01T00:00:00.000Z',
+      });
+
+      const res = await testApp
+        .request()
+        .patch(`/api/v1/models/${m.id}`)
+        .send({
+          displayName: 'Steady',
+          contextWindow: 128000,
+          defaultTemperature: 0.7,
+          defaultMaxTokens: 4096,
+          // A boolean against a column that stores 0/1: unchanged all the same.
+          enabled: true,
+        })
+        .expect(200);
+
+      expect(res.body.updatedAt).toBe('2026-01-01T00:00:00.000Z');
+
+      const row = testApp.db.get<{ updated_at: string }>(
+        'SELECT updated_at FROM models WHERE id = ?',
+        [m.id],
+      );
+      expect(row?.updated_at).toBe('2026-01-01T00:00:00.000Z');
+    });
+
+    it('advances updated_at when one field among several actually changes', async () => {
+      const p = testApp.fixtures.createProvider();
+      const m = testApp.fixtures.createModel({
+        provider_id: p.id,
+        display_name: 'Steady',
+        enabled: 1,
+        updated_at: '2026-01-01T00:00:00.000Z',
+      });
+
+      const res = await testApp
+        .request()
+        .patch(`/api/v1/models/${m.id}`)
+        .send({ displayName: 'Steady', enabled: false })
+        .expect(200);
+
+      expect(res.body.enabled).toBe(false);
+      expect(res.body.updatedAt).not.toBe('2026-01-01T00:00:00.000Z');
+    });
+
     it('updates enabled boolean (round-trip)', async () => {
       const p = testApp.fixtures.createProvider();
       const m = testApp.fixtures.createModel({
