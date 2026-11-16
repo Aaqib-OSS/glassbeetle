@@ -724,26 +724,49 @@ export class ModelsService {
       });
     }
 
+    // A field is written only when the request actually changes it. A key being
+    // present in the body is not enough: re-sending the stored value would move
+    // `updated_at` for a change nobody made, and that column is read — the
+    // Overview's activity panel is assembled from it and `?sort=updatedAt`
+    // orders by it.
     const setClauses: string[] = [];
     const setParams: unknown[] = [];
 
-    if (dto.displayName !== undefined) {
+    if (
+      dto.displayName !== undefined &&
+      dto.displayName !== existing.display_name
+    ) {
       setClauses.push('display_name = ?');
       setParams.push(dto.displayName);
     }
-    if (dto.contextWindow !== undefined) {
+    if (
+      dto.contextWindow !== undefined &&
+      dto.contextWindow !== existing.context_window
+    ) {
       setClauses.push('context_window = ?');
       setParams.push(dto.contextWindow);
     }
-    if (dto.defaultTemperature !== undefined) {
+    if (
+      dto.defaultTemperature !== undefined &&
+      dto.defaultTemperature !== existing.default_temperature
+    ) {
       setClauses.push('default_temperature = ?');
       setParams.push(dto.defaultTemperature);
     }
-    if (dto.defaultMaxTokens !== undefined) {
+    if (
+      dto.defaultMaxTokens !== undefined &&
+      dto.defaultMaxTokens !== existing.default_max_tokens
+    ) {
       setClauses.push('default_max_tokens = ?');
       setParams.push(dto.defaultMaxTokens);
     }
-    if (dto.enabled !== undefined) {
+    // Judged in the column's own representation: `enabled` is stored as 0 or 1,
+    // so a boolean from the body has to be converted before it can be compared
+    // with what the row holds.
+    if (
+      dto.enabled !== undefined &&
+      toDbBoolean(dto.enabled) !== existing.enabled
+    ) {
       setClauses.push('enabled = ?');
       setParams.push(toDbBoolean(dto.enabled));
     }

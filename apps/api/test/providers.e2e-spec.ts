@@ -593,6 +593,53 @@ describe('Providers, credentials and models (e2e integration suite)', () => {
       expect(res.body.updatedAt).not.toBe(originalUpdatedAt);
     });
 
+    it('leaves updatedAt alone when the patch resolves to the stored row', async () => {
+      const provider = testApp.fixtures.createProvider({
+        name: 'Unchanged',
+        kind: 'openai',
+        enabled: 1,
+      });
+
+      await new Promise((r) => setTimeout(r, 5));
+
+      const identical = await testApp
+        .request()
+        .patch(`/api/v1/providers/${provider.id}`)
+        .send({ name: 'Unchanged', enabled: true })
+        .expect(200);
+
+      expect(identical.body.updatedAt).toBe(provider.updated_at);
+
+      const empty = await testApp
+        .request()
+        .patch(`/api/v1/providers/${provider.id}`)
+        .send({})
+        .expect(200);
+
+      expect(empty.body.updatedAt).toBe(provider.updated_at);
+
+      const row = testApp.db.get<{ updated_at: string }>(
+        'SELECT updated_at FROM providers WHERE id = ?',
+        [provider.id],
+      );
+      expect(row?.updated_at).toBe(provider.updated_at);
+    });
+
+    it('still rejects a patch that resolves to an invalid provider', async () => {
+      const provider = testApp.fixtures.createProvider({
+        kind: 'openai',
+        base_url: null,
+      });
+
+      // Changing only the kind leaves base_url null, which `ollama` requires:
+      // the no-op shortcut must not let an invalid combination through.
+      await testApp
+        .request()
+        .patch(`/api/v1/providers/${provider.id}`)
+        .send({ kind: 'ollama' })
+        .expect(400);
+    });
+
     it('forces isLocal=true when kind is updated to ollama', async () => {
       const provider = testApp.fixtures.createProvider({
         kind: 'anthropic',
