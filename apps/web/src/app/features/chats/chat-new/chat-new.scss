@@ -2,45 +2,41 @@
 
 @include pick.pick;
 
-/* The whole surface is the conversation that is about to exist: the field
-   sits where the eye lands, a little above centre, and nothing else is on the
-   screen. */
+/* The whole surface is the conversation that is about to exist: the beetle,
+   who it is with, and the field, stacked on the centre line of the sheet a
+   little above its middle. */
 .start {
   position: relative;
-  isolation: isolate;
   display: flex;
   flex-direction: column;
   align-items: center;
   min-height: 100%;
-  padding: clamp(2rem, 18vh, 11rem) 1.25rem 3rem;
-  overflow: hidden;
+  padding: clamp(1.5rem, 9vh, 6rem) 1.5rem 3rem;
 }
 
-/* The logo below the composer, in full but quiet: transparent enough to read
-   as part of the surface, with only its outermost edge feathered so the
-   shadow fades out instead of ending. */
 .start__mark {
-  position: absolute;
-  z-index: -1;
-  top: calc(clamp(2rem, 18vh, 11rem) + 12.5rem);
-  left: 50%;
-  width: min(24rem, 80vw);
+  align-self: center;
+  width: clamp(7rem, 22vh, 11rem);
   height: auto;
-  translate: -50% 0;
-  opacity: 0.5;
-  mask-image: radial-gradient(closest-side, #000 80%, transparent 100%);
+  margin-bottom: 0.25rem;
+  filter: drop-shadow(0 18px 24px light-dark(rgb(40 60 90 / 18%), rgb(0 0 0 / 45%)));
   pointer-events: none;
   user-select: none;
-  animation: mark-enter 600ms var(--gb-ease) both;
-
-  :host-context([data-theme='light']) & {
-    opacity: 0.5;
-  }
+  animation:
+    mark-enter 700ms var(--gb-spring) both,
+    mark-float 6s ease-in-out 700ms infinite;
 }
 
 @keyframes mark-enter {
   from {
     opacity: 0;
+    transform: translateY(10px) scale(0.92);
+  }
+}
+
+@keyframes mark-float {
+  50% {
+    transform: translateY(-6px);
   }
 }
 
@@ -53,10 +49,10 @@
 .start__body {
   display: flex;
   flex-direction: column;
-  gap: 0.875rem;
+  gap: 1rem;
   width: 100%;
   max-width: 46rem;
-  animation: start-enter 220ms var(--gb-ease) both;
+  animation: start-enter 260ms var(--gb-ease) both;
 
   &--blank {
     align-items: center;
@@ -68,20 +64,22 @@
 @keyframes start-enter {
   from {
     opacity: 0;
-    transform: translateY(4px);
+    transform: translateY(6px);
   }
 }
 
 .start__title {
   display: flex;
   align-items: baseline;
+  justify-content: center;
   gap: 0.5rem;
   flex-wrap: wrap;
-  margin: 0;
-  font-size: 1.375rem;
+  margin: 0 0 0.5rem;
+  font-size: 1.75rem;
   font-weight: 600;
-  letter-spacing: -0.015em;
+  letter-spacing: -0.02em;
   line-height: 1.2;
+  text-align: center;
 }
 
 .start__with {
@@ -106,13 +104,15 @@
 
 .start__keys {
   margin: 0;
+  text-align: center;
   color: var(--mat-sys-on-surface-variant);
   font-size: 0.6875rem;
 
   kbd {
-    padding: 0.0625rem 0.3125rem;
-    border-radius: 4px;
-    background: var(--mat-sys-surface-container-high);
+    padding: 0.0625rem 0.375rem;
+    border-radius: 999px;
+    background: var(--gb-glass-regular);
+    box-shadow: var(--gb-glass-rim);
     font-size: 0.625rem;
   }
 }
@@ -120,6 +120,7 @@
 .obstacle {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 0.4375rem;
   flex-wrap: wrap;
   margin: 0;
