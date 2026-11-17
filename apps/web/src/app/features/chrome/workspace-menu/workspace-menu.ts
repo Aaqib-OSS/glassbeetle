@@ -1,4 +1,4 @@
-import { OverlayModule } from '@angular/cdk/overlay';
+import { OverlayModule, type ConnectedPosition } from '@angular/cdk/overlay';
 import {
   Component,
   OnInit,
@@ -82,6 +82,21 @@ export class WorkspaceMenu implements OnInit {
    * capsule that already provides them.
    */
   readonly flush = input(false, { transform: booleanAttribute });
+
+  /**
+   * Draws the trigger as a settings gear, for the foot of the rail, with the
+   * backend's state as a dot on its corner. The panel then opens upwards.
+   */
+  readonly gear = input(false, { transform: booleanAttribute });
+
+  protected readonly belowPositions: ConnectedPosition[] = [
+    { originX: 'start', originY: 'bottom', overlayX: 'start', overlayY: 'top', offsetY: 6 },
+  ];
+
+  protected readonly abovePositions: ConnectedPosition[] = [
+    { originX: 'start', originY: 'top', overlayX: 'start', overlayY: 'bottom', offsetY: -8 },
+    { originX: 'start', originY: 'bottom', overlayX: 'start', overlayY: 'top', offsetY: 6 },
+  ];
 
   protected readonly open = signal(false);
   protected readonly version = signal<string | null>(null);

@@ -34,19 +34,8 @@ import { FleetSpine } from './features/chrome/fleet-spine/fleet-spine';
 import { FleetStatus } from './features/chrome/fleet-status/fleet-status';
 import { WindowControls } from './features/chrome/window-controls/window-controls';
 import { SpendMeter } from './features/chrome/spend-meter/spend-meter';
-import { WorkspaceMenu } from './features/chrome/workspace-menu/workspace-menu';
-import {
-  ConversationRail,
-  PRIMARY_LINKS,
-  WORKSPACE_LINKS,
-} from './features/chrome/conversation-rail/conversation-rail';
-import { titleOf } from './core/api/chats.models';
+import { ConversationRail } from './features/chrome/conversation-rail/conversation-rail';
 import { Avatar } from './shared/ui/avatar';
-
-interface Crumb {
-  readonly label: string;
-  readonly path: string;
-}
 
 /** Width at which the rail can sit beside the content instead of over it. */
 const WIDE_LAYOUT = '(min-width: 62rem)';
@@ -75,7 +64,6 @@ const WIDE_LAYOUT = '(min-width: 62rem)';
     RouterOutlet,
     SpendMeter,
     WindowControls,
-    WorkspaceMenu,
   ],
   templateUrl: './app.html',
   styleUrl: './app.scss',
@@ -96,19 +84,6 @@ export class App implements OnInit {
   private readonly capabilities = inject(CapabilitiesService);
   protected readonly desktop = inject(DesktopService);
   private readonly status = inject(ApiStatusService);
-
-  /**
-   * Every surface the trail can name: the rail's own, plus the ones reached
-   * from the window chrome rather than from the rail.
-   *
-   * Without the latter the profile would read as "Workspace", which is the
-   * fallback for a route the chrome does not recognise.
-   */
-  private readonly surfaces: readonly Crumb[] = [
-    ...PRIMARY_LINKS,
-    ...WORKSPACE_LINKS,
-    { label: 'Profile', path: '/profile' },
-  ];
 
   protected readonly wideLayout = toSignal(
     this.breakpoints.observe(WIDE_LAYOUT).pipe(map((state) => state.matches)),
@@ -135,46 +110,6 @@ export class App implements OnInit {
   ] as const;
 
   private hasHandledInitialNavigation = false;
-
-  /** The current URL, so the trail recomputes on every navigation. */
-  private readonly url = toSignal(
-    this.router.events.pipe(
-      filter((event) => event instanceof NavigationEnd),
-      map((event) => event.urlAfterRedirects),
-    ),
-    { initialValue: this.router.url },
-  );
-
-  /**
-   * Where the user is, in the workspace's own words.
-   *
-   * A chat's trail shows its title and an agent's its name, both resolved from
-   * what the shell already holds — which is the one thing a title bar is
-   * genuinely for, and what makes the chrome feel part of the app rather than
-   * a frame around it.
-   */
-  protected readonly trail = computed<readonly Crumb[]>(() => {
-    const url = this.url().split('?')[0] ?? '';
-    const segments = url.split('/').filter(Boolean);
-    const [section, id] = segments;
-
-    if (!section) {
-      return [{ label: 'Chats', path: '/chats' }];
-    }
-
-    const root = `/${section}`;
-    const item = this.surfaces.find((entry) => entry.path === root);
-    const head: Crumb = {
-      label: item?.label ?? 'Workspace',
-      path: item?.path ?? '/chats/new',
-    };
-
-    if (!id) {
-      return [head];
-    }
-
-    return [head, { label: this.nameOf(section, id), path: url }];
-  });
 
   protected readonly themeMode = this.theme.mode;
   protected readonly themeIcon = computed(() =>
@@ -225,6 +160,10 @@ export class App implements OnInit {
     // paint is never visible as a white flash.
     afterNextRender(() => void this.desktop.signalReady());
 
+    // The desktop window is transparent and the OS blurs what is behind it;
+    // the page then tints that glass rather than painting a backdrop of its own.
+    document.documentElement.classList.toggle('gb-desktop', this.desktop.isDesktop);
+
     this.router.events
       .pipe(
         filter((event) => event instanceof NavigationEnd),
@@ -270,35 +209,6 @@ export class App implements OnInit {
     this.models.refresh();
     this.user.refresh();
     this.spend.refresh();
-  }
-
-  /**
-   * What to call the thing a detail route is showing.
-   *
-   * Named from what the shell already holds where it can be; otherwise the
-   * trail says what kind of thing it is rather than inventing a name.
-   */
-  private nameOf(section: string, id: string): string {
-    switch (section) {
-      case 'chats': {
-        if (id === 'new') {
-          return 'New chat';
-        }
-
-        const chat = this.conversations.chats().find((entry) => entry.id === id);
-        return chat ? titleOf(chat) : 'Chat';
-      }
-      case 'agents':
-        return this.roster.agents().find((entry) => entry.id === id)?.name ?? 'Agent';
-      case 'projects':
-        return this.conversations.projectName(id) ?? 'Project';
-      case 'teams':
-        return this.conversations.teamName(id) ?? 'Team';
-      case 'artifacts':
-        return 'Artifact';
-      default:
-        return 'Workspace';
-    }
   }
 
   /** Carries out a shell action, wherever it was triggered from. */

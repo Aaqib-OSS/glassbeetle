@@ -289,14 +289,9 @@ describe('App shell', () => {
     ]);
   });
 
-  it('keeps the configuration surfaces folded away until they are asked for', () => {
+  it('lists the configuration surfaces until they are folded away', () => {
     const fixture = render();
     const element = fixture.nativeElement as HTMLElement;
-
-    expect(hrefsOf(element)).not.toContain('/teams');
-
-    element.querySelector<HTMLButtonElement>('.workspace__toggle')?.click();
-    fixture.detectChanges();
 
     const hrefs = hrefsOf(element);
     expect(hrefs).toContain('/teams');
@@ -304,6 +299,11 @@ describe('App shell', () => {
     expect(hrefs).toContain('/prompts');
     expect(hrefs).toContain('/overview');
     expect(hrefs).toContain('/budget');
+
+    element.querySelector<HTMLButtonElement>('.workspace__toggle')?.click();
+    fixture.detectChanges();
+
+    expect(hrefsOf(element)).not.toContain('/teams');
   });
 
   it('unfolds the configuration surfaces while one of them is on screen', async () => {
@@ -361,17 +361,7 @@ describe('App shell', () => {
     expect(element.querySelector('.chats')?.textContent).toContain('No conversations yet');
   });
 
-  it('names the open conversation in the trail', async () => {
-    const fixture = render({ agents: [agent()], chats: [chat()] });
-
-    await TestBed.inject(Router).navigateByUrl('/chats/c1');
-    fixture.detectChanges();
-
-    const here = (fixture.nativeElement as HTMLElement).querySelector('.trail__here');
-    expect(here?.textContent).toContain('Release planning');
-  });
-
-  /** The deck carries the backend's state on the product mark itself. */
+  /** The settings gear carries the backend's state as a dot on its corner. */
   function stateClass(fixture: { nativeElement: unknown }): string {
     const element = fixture.nativeElement as HTMLElement;
     return element.querySelector('.trigger__state')?.className ?? '';
@@ -529,7 +519,7 @@ describe('App shell on a platform whose controls sit on the right', () => {
     fixture.detectChanges();
 
     const element = fixture.nativeElement as HTMLElement;
-    const children = Array.from(element.querySelector('.deck__bar')?.children ?? []);
+    const children = Array.from(element.querySelector('.deck__end--right')?.children ?? []);
     const controls = children.findIndex(
       (child) => child.tagName.toLowerCase() === 'app-window-controls',
     );

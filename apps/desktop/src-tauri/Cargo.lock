@@ -1331,6 +1331,7 @@ name = "glassbeetle-desktop"
 version = "0.1.0"
 dependencies = [
  "log",
+ "objc2",
  "serde",
  "serde_json",
  "tauri",

@@ -2,92 +2,70 @@
      rail, which grows one entry per conversation, and land in the content. -->
 <a class="skip-link" href="#main-content" (click)="skipToContent()">Skip to main content</a>
 
-<!-- The deck: this app's window chrome. The window is undecorated, so the
-     title bar, the controls and the drag surface are all drawn here.
+<!-- The deck: this app's window chrome, clear glass along the top of the
+     window. The window is undecorated, so the title bar, the controls and the
+     drag surface are all drawn here.
      `data-tauri-drag-region` applies to the element carrying it, so the bar's
      own surface moves the window while the controls on it keep working. -->
 <header class="deck" data-tauri-drag-region>
   <div class="deck__bar" data-tauri-drag-region>
-    @if (desktop.controlsOnLeft) {
-      <app-window-controls />
-      <span class="deck__seam" aria-hidden="true"></span>
-    }
+    <div class="deck__end" data-tauri-drag-region>
+      @if (desktop.controlsOnLeft) {
+        <app-window-controls />
+      }
 
-    <!-- The rail toggle and the workspace control share one capsule: both are
-         about this workspace, and a lone icon button beside the mark read as a
-         stray piece of UI rather than part of the chrome. -->
-    <div class="cluster">
-      <button
-        class="cluster__toggle"
-        type="button"
-        [class.cluster__toggle--on]="railOpen()"
-        [attr.aria-label]="railOpen() ? 'Hide the rail' : 'Show the rail'"
-        [attr.aria-expanded]="railOpen()"
-        [matTooltip]="(railOpen() ? 'Hide the rail' : 'Show the rail') + '  ' + commandKey + 'B'"
-        matTooltipPosition="below"
-        (click)="toggleRail()"
-      >
-        <mat-icon>{{ railOpen() ? 'left_panel_close' : 'left_panel_open' }}</mat-icon>
-      </button>
-
-      <span class="cluster__divider" aria-hidden="true"></span>
-
-      <app-workspace-menu flush />
+      <!-- While the rail is open its toggle lives in the rail's foot; only a
+           closed rail needs a way back from up here. -->
+      @if (!railOpen()) {
+        <button
+          class="glyph"
+          type="button"
+          aria-label="Show the rail"
+          aria-expanded="false"
+          [matTooltip]="'Show the rail  ' + commandKey + 'B'"
+          matTooltipPosition="below"
+          (click)="toggleRail()"
+        >
+          <mat-icon>left_panel_open</mat-icon>
+        </button>
+      }
     </div>
 
-    <!-- Where you are, as the title bar's actual job — but in the workspace's
-         own words, including an agent's real name. -->
-    <nav class="trail" aria-label="Location" data-tauri-drag-region>
-      <span class="trail__sep" aria-hidden="true">/</span>
-      @for (crumb of trail(); track crumb.path; let last = $last) {
-        @if (!last) {
-          <a class="trail__link" [routerLink]="crumb.path">{{ crumb.label }}</a>
-          <span class="trail__sep" aria-hidden="true">/</span>
-        } @else {
-          <span class="trail__here" aria-current="page">{{ crumb.label }}</span>
-        }
-      }
-    </nav>
-
-    <span class="deck__grip" data-tauri-drag-region aria-hidden="true"></span>
-
+    <!-- Centred on the window, as a search field is on the Mac: reads as a
+         field but is a button that opens the palette. -->
     <button
       class="command"
-      matTooltip="Search chats, agents and memory"
-      matTooltipPosition="below"
+      [attr.aria-label]="'Search chats, agents and memory, ' + commandKey + 'K'"
       (click)="openPalette()"
     >
       <mat-icon class="command__icon">search</mat-icon>
-      <span class="command__label">Search chats, agents and memory</span>
+      <span class="command__label">Search</span>
       <kbd class="command__key">{{ commandKey }}K</kbd>
     </button>
 
-    <app-fleet-status />
+    <div class="deck__end deck__end--right" data-tauri-drag-region>
+      <app-fleet-status />
 
-    <app-spend-meter />
+      <app-spend-meter />
 
-    <!-- The person, at the end of the bar: the one control here that is about
+      <!-- The person, at the end of the bar: the one control here that is about
          you rather than about the workspace. -->
-    <a
-      class="identity"
-      routerLink="/profile"
-      routerLinkActive="identity--active"
-      [matTooltip]="user.displayName() + ' · Profile'"
-      matTooltipPosition="below"
-      [attr.aria-label]="'Profile of ' + user.displayName()"
-    >
-      <gb-avatar [name]="user.displayName()" [imageUrl]="user.pictureUrl()" size="small" />
-    </a>
+      <a
+        class="identity"
+        routerLink="/profile"
+        routerLinkActive="identity--active"
+        [matTooltip]="user.displayName() + ' · Profile'"
+        matTooltipPosition="below"
+        [attr.aria-label]="'Profile of ' + user.displayName()"
+      >
+        <gb-avatar [name]="user.displayName()" [imageUrl]="user.pictureUrl()" size="small" />
+      </a>
 
-    @if (desktop.isDesktop && !desktop.controlsOnLeft) {
-      <span class="deck__seam" aria-hidden="true"></span>
-      <app-window-controls />
-    }
+      @if (desktop.isDesktop && !desktop.controlsOnLeft) {
+        <app-window-controls />
+      }
+    </div>
   </div>
-
-  <!-- The deck's bottom edge reports the fleet, in the space a border would
-       have taken anyway. -->
-  <app-fleet-spine />
 </header>
 
 @if (desktop.needsResizeEdges) {
@@ -110,12 +88,22 @@
   }
 
   <nav class="rail" [class.rail--overlay]="!wideLayout()" aria-label="Workspace">
-    <app-conversation-rail [commandKey]="commandKey" (navigated)="closeRailOnNarrow()" />
+    <app-conversation-rail
+      [commandKey]="commandKey"
+      (navigated)="closeRailOnNarrow()"
+      (hide)="toggleRail()"
+    />
   </nav>
 
   <!-- The routed surface scrolls as a whole for a page, and not at all for a
        conversation, which fills it and scrolls its own transcript. -->
-  <main #mainContent id="main-content" class="surface" tabindex="-1">
-    <router-outlet />
-  </main>
+  <!-- The sheet: the one opaque-ish surface in the window, laid on the glass
+       so what is read never sits on the desktop behind it. Its top edge
+       reports the fleet. -->
+  <div class="sheet">
+    <app-fleet-spine class="sheet__spine" />
+    <main #mainContent id="main-content" class="surface" tabindex="-1">
+      <router-outlet />
+    </main>
+  </div>
 </div>

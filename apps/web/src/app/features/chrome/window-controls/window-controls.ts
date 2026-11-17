@@ -7,17 +7,22 @@ import { DesktopService } from '../../../core/desktop/desktop.service';
  * The window's own controls, drawn by the app.
  *
  * The window is undecorated, so these are not a skin over native buttons —
- * they are the only ones there are. They keep the platform's *position*
- * (left on macOS, right elsewhere) because that is muscle memory worth more
- * than symmetry, while the look is the product's: flat glyphs in a capsule
- * that only take on colour under the cursor, so the chrome stays quiet until
- * you reach for it.
+ * they are the only ones there are. They keep the platform's *position* and
+ * order (close first on the left on macOS, close last on the right elsewhere)
+ * because that is muscle memory worth more than symmetry. The look is the
+ * Mac's three coloured lights, drawn larger and with their glyphs always
+ * showing, so what each one does never has to be discovered by hovering.
  */
 @Component({
   selector: 'app-window-controls',
   imports: [MatTooltipModule],
   template: `
-    <div class="controls" role="group" aria-label="Window">
+    <div
+      class="controls"
+      [class.controls--mac]="desktop.controlsOnLeft"
+      role="group"
+      aria-label="Window"
+    >
       <button
         class="control control--minimise"
         type="button"
@@ -66,7 +71,7 @@ import { DesktopService } from '../../../core/desktop/desktop.service';
   styleUrl: './window-controls.scss',
 })
 export class WindowControls implements OnInit {
-  private readonly desktop = inject(DesktopService);
+  protected readonly desktop = inject(DesktopService);
 
   protected readonly maximised = signal(false);
 

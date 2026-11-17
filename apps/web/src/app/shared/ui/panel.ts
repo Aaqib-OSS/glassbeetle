@@ -49,10 +49,9 @@ import { MatIconModule } from '@angular/material/icon';
       display: flex;
       flex-direction: column;
       min-width: 0;
-      border: 1px solid var(--mat-sys-outline-variant);
-      border-radius: 10px;
-      background: var(--mat-sys-surface-container-low);
-      box-shadow: var(--gb-shadow-panel);
+      border-radius: var(--gb-radius-control);
+      background: var(--gb-glass-regular);
+      box-shadow: var(--gb-glass-rim), var(--gb-shadow-panel);
       overflow: hidden;
     }
 
@@ -62,7 +61,7 @@ import { MatIconModule } from '@angular/material/icon';
       gap: 0.625rem;
       padding: 0.625rem 0.875rem;
       border-bottom: 1px solid var(--mat-sys-outline-variant);
-      background: var(--mat-sys-surface-container);
+      background: var(--gb-glass-clear);
     }
 
     .panel__icon {

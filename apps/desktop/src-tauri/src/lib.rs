@@ -1,3 +1,4 @@
+mod corners;
 mod menu;
 
 use std::time::Duration;
@@ -53,6 +54,10 @@ pub fn run() {
             }
 
             app.set_menu(menu::build(app.handle())?)?;
+
+            if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
+                corners::round(&window, corners::WINDOW_RADIUS);
+            }
 
             // The window is created hidden and revealed once the frontend
             // reports it has painted. A webview shown while still blank is a
