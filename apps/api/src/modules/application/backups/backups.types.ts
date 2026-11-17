@@ -56,7 +56,7 @@ export const ALLOWED_BACKUP_SORT_COLUMNS: Record<string, string> = {
 };
 
 /**
- * Options accepted by {@link BackupsService.createBackup}.
+ * Options accepted by `BackupsService.createBackup`.
  */
 export interface CreateBackupOptions {
   /** Whether the backup was triggered manually or by the background scheduler */
