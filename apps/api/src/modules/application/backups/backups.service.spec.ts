@@ -218,6 +218,72 @@ describe('BackupsService', () => {
     expect(extractedArtifact).toEqual(artifactContent);
   });
 
+  describe('file permissions', () => {
+    // POSIX modes; Windows does not report them.
+    const posixIt = process.platform === 'win32' ? it.skip : it;
+
+    posixIt(
+      'writes the archive and the default backups directory owner-only',
+      async () => {
+        const result = await backupsService.createBackup();
+
+        const defaultBackupDir = path.join(testDataDir, 'backups');
+        const archivePath = path.join(
+          defaultBackupDir,
+          `backup-${result.id}.tar.gz`,
+        );
+        expect(fs.statSync(archivePath).mode & 0o777).toBe(0o600);
+        expect(fs.statSync(defaultBackupDir).mode & 0o777).toBe(0o700);
+      },
+    );
+
+    posixIt(
+      'writes the archive owner-only in a configured target directory',
+      async () => {
+        dbService.run(
+          'UPDATE backup_policy SET target_directory = ?, updated_at = ? WHERE id = 1',
+          [testBackupTargetDir, nowIso()],
+        );
+
+        const result = await backupsService.createBackup();
+
+        const archivePath = path.join(
+          testBackupTargetDir,
+          `backup-${result.id}.tar.gz`,
+        );
+        expect(fs.statSync(archivePath).mode & 0o777).toBe(0o600);
+      },
+    );
+
+    posixIt(
+      'stages the snapshot in an owner-only directory and removes it afterwards',
+      async () => {
+        const originalWriteFile = fs.promises.writeFile.bind(fs.promises);
+        let stagingDir: string | undefined;
+        let stagingMode: number | undefined;
+        vi.spyOn(fs.promises, 'writeFile').mockImplementation(
+          async (file, ...rest) => {
+            if (
+              typeof file === 'string' &&
+              path.basename(file) === 'manifest.json'
+            ) {
+              stagingDir = path.dirname(file);
+              stagingMode = fs.statSync(stagingDir).mode & 0o777;
+            }
+            return originalWriteFile(file, ...rest);
+          },
+        );
+
+        await backupsService.createBackup();
+
+        expect(stagingDir).toBeDefined();
+        expect(path.dirname(stagingDir!)).toBe(path.resolve(os.tmpdir()));
+        expect(stagingMode).toBe(0o700);
+        expect(fs.existsSync(stagingDir!)).toBe(false);
+      },
+    );
+  });
+
   it('uses target_directory from backup_policy when configured', async () => {
     // Configure target_directory in backup_policy table
     dbService.run(

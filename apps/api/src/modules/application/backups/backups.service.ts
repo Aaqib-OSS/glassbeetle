@@ -128,14 +128,20 @@ export class BackupsService {
     try {
       const targetDir = this.resolveTargetDirectory();
       const archiveFileName = `backup-${id}.tar.gz`;
-      stagingDir = path.join(os.tmpdir(), `glassbeetle-backup-${id}`);
       partialArchivePath = path.join(targetDir, `${archiveFileName}.tmp`);
       finalArchivePath = path.join(targetDir, archiveFileName);
 
       this.checkDiskSpace(targetDir);
 
-      // Create staging directories
-      await fs.promises.mkdir(stagingDir, { recursive: true });
+      // Create staging directories. The staging copy holds the full
+      // database snapshot and every stored file, and os.tmpdir() is the
+      // shared /tmp on Linux, so it must be owner-only. mkdtemp creates the
+      // directory with 0o700 under an unpredictable name; the chmod is the
+      // same belt-and-braces that encryption.service.ts uses for master.key.
+      stagingDir = await fs.promises.mkdtemp(
+        path.join(os.tmpdir(), `glassbeetle-backup-${id}-`),
+      );
+      await fs.promises.chmod(stagingDir, 0o700);
       const stagingFilesDir = path.join(stagingDir, 'files');
       await fs.promises.mkdir(stagingFilesDir, { recursive: true });
 
@@ -170,7 +176,18 @@ export class BackupsService {
         'utf8',
       );
 
-      // 4. Stream archive creation
+      // 4. Stream archive creation. Create the archive file owner-only
+      // (0o600) before tar writes to it, so it is never readable by other
+      // accounts, not even while it is being written. tar truncates the
+      // existing file and keeps its mode, and the rename below keeps it too.
+      const partialHandle = await fs.promises.open(
+        partialArchivePath,
+        'wx',
+        0o600,
+      );
+      await partialHandle.close();
+      await fs.promises.chmod(partialArchivePath, 0o600);
+
       await tar.create(
         {
           gzip: true,
@@ -487,7 +504,7 @@ export class BackupsService {
     // Default fallback under application data directory
     const dataDir = this.appConfigService?.dataDir ?? resolveDefaultDataDir();
     const defaultDir = path.resolve(dataDir, 'backups');
-    mkdirSync(defaultDir, { recursive: true });
+    mkdirSync(defaultDir, { recursive: true, mode: 0o700 });
 
     try {
       fs.accessSync(defaultDir, fs.constants.W_OK);
