@@ -1,3 +1,4 @@
+import path from 'node:path';
 import type { Readable } from 'node:stream';
 import {
   BadRequestException,
@@ -20,6 +21,7 @@ import {
 import { DatabaseService } from '../../database/database.service.js';
 import { FileNotFoundError } from '../../file-storage/file-storage.errors.js';
 import { FileStorageService } from '../../file-storage/file-storage.service.js';
+import { resolveStoragePath } from '../../file-storage/path-safety.js';
 import { AnalyticsService } from '../analytics/analytics.service.js';
 import { DEFAULT_MAX_ARTIFACT_FILE_SIZE_BYTES } from './artifact-upload.interceptor.js';
 import {
@@ -77,6 +79,45 @@ export const ALLOWED_ARTIFACT_VERSION_SORT_COLUMNS: Readonly<
  * referenced by the active artifact or remaining versions are unlinked.
  */
 export const MAX_ARTIFACT_VERSIONS_RETAINED = 20;
+
+const FILE_OWNER_REFERENCES = [
+  {
+    table: 'artifacts',
+    idColumn: 'id',
+    pathColumn: 'file_path',
+    excludeCurrentArtifact: true,
+  },
+  {
+    table: 'artifact_versions',
+    idColumn: 'artifact_id',
+    pathColumn: 'file_path',
+    excludeCurrentArtifact: true,
+  },
+  {
+    table: 'projects',
+    idColumn: 'id',
+    pathColumn: 'image_path',
+    excludeCurrentArtifact: false,
+  },
+  {
+    table: 'agents',
+    idColumn: 'id',
+    pathColumn: 'picture_path',
+    excludeCurrentArtifact: false,
+  },
+  {
+    table: 'user_profile',
+    idColumn: 'id',
+    pathColumn: 'picture_path',
+    excludeCurrentArtifact: false,
+  },
+  {
+    table: 'backups',
+    idColumn: 'id',
+    pathColumn: 'file_path',
+    excludeCurrentArtifact: false,
+  },
+] as const;
 
 /**
  * Descriptor of an artifact's actual content for direct serving or streaming.
@@ -368,6 +409,10 @@ export class ArtifactsService {
       });
     }
 
+    const normalizedFilePath = hasFilePath
+      ? this.assertFilePathClaimable(effectiveFilePath!)
+      : null;
+
     const created = this.db.transaction(() => {
       if (dto.projectId) {
         const project = this.db.get<{ id: string }>(
@@ -408,7 +453,11 @@ export class ArtifactsService {
         }
       }
 
-      const row = mapCreateArtifactDtoToRow(dto);
+      const row = mapCreateArtifactDtoToRow(
+        normalizedFilePath === null
+          ? dto
+          : { ...dto, filePath: normalizedFilePath, file_path: null },
+      );
 
       this.db.run(
         `INSERT INTO artifacts (id, project_id, chat_id, agent_id, title, type, mime_type, content, file_path, version, created_at, updated_at)
@@ -508,7 +557,18 @@ export class ArtifactsService {
       }
     }
 
-    const updateResult = applyArtifactUpdates(existing, dto);
+    const dtoFilePath = dto.filePath ?? dto.file_path;
+    const normalizedFilePath =
+      dtoFilePath !== undefined && dtoFilePath !== null
+        ? this.assertFilePathClaimable(dtoFilePath, id)
+        : undefined;
+
+    const updateResult = applyArtifactUpdates(
+      existing,
+      normalizedFilePath === undefined
+        ? dto
+        : { ...dto, filePath: normalizedFilePath, file_path: null },
+    );
 
     if (!updateResult.hasChanges) {
       return mapArtifactRowToResponse(existing, { includeContent: true });
@@ -918,6 +978,52 @@ export class ArtifactsService {
     await this.unlinkOrphanedFiles(filesToConsider);
   }
 
+  private assertFilePathClaimable(
+    filePath: string,
+    currentArtifactId?: string,
+  ): string {
+    const storageRoot = this.fileStorage?.storageRoot ?? process.cwd();
+    const normalized = path
+      .relative(storageRoot, resolveStoragePath(storageRoot, filePath))
+      .split(path.sep)
+      .join('/');
+
+    for (const owner of FILE_OWNER_REFERENCES) {
+      const excludeId =
+        owner.excludeCurrentArtifact && currentArtifactId
+          ? currentArtifactId
+          : undefined;
+      const ownerRow = this.db.get<{ id: string }>(
+        `SELECT ${owner.idColumn} AS id FROM ${owner.table}
+         WHERE ${owner.pathColumn} = ?${excludeId ? ` AND ${owner.idColumn} != ?` : ''}
+         LIMIT 1`,
+        excludeId ? [normalized, excludeId] : [normalized],
+      );
+
+      if (ownerRow) {
+        throw new BadRequestException({
+          code: 'ARTIFACT_FILE_ALREADY_OWNED',
+          message: `filePath "${filePath}" is already owned by another record`,
+        });
+      }
+    }
+
+    return normalized;
+  }
+
+  private isFileReferenced(filePath: string): boolean {
+    return FILE_OWNER_REFERENCES.some((owner) =>
+      Boolean(
+        this.db.get<{ id: string }>(
+          `SELECT ${owner.idColumn} AS id FROM ${owner.table}
+           WHERE ${owner.pathColumn} = ?
+           LIMIT 1`,
+          [filePath],
+        ),
+      ),
+    );
+  }
+
   /**
    * Snapshots an existing active artifact row into `artifact_versions`.
    */
@@ -985,17 +1091,7 @@ export class ArtifactsService {
 
     const uniquePaths = Array.from(new Set(filePaths));
     for (const filePath of uniquePaths) {
-      const activeRef = this.db.get<{ id: string }>(
-        'SELECT id FROM artifacts WHERE file_path = ? LIMIT 1',
-        [filePath],
-      );
-      if (activeRef) continue;
-
-      const versionRef = this.db.get<{ id: string }>(
-        'SELECT id FROM artifact_versions WHERE file_path = ? LIMIT 1',
-        [filePath],
-      );
-      if (versionRef) continue;
+      if (this.isFileReferenced(filePath)) continue;
 
       try {
         await this.fileStorage.delete(filePath);
