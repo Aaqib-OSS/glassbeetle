@@ -40,6 +40,15 @@ html {
   // which is what stops this looking like every other Material app.
   @include mat.theme-overrides(palette.scheme-overrides());
 
+  // Tables, paginators and cards lie on the glass sheet rather than covering
+  // it with an opaque slab of their own.
+  --mat-table-background-color: transparent;
+  --mat-paginator-container-background-color: transparent;
+  --mat-card-elevated-container-color: var(--gb-glass-regular);
+  --mat-card-outlined-container-color: var(--gb-glass-clear);
+  --mat-expansion-container-background-color: var(--gb-glass-clear);
+  --mat-tooltip-container-color: light-dark(rgb(30 36 44 / 88%), rgb(240 244 248 / 92%));
+
   color-scheme: dark;
 
   &[data-theme='light'] {
@@ -82,7 +91,7 @@ html {
   --gb-glass-blur: blur(28px) saturate(180%);
   --gb-glass-clear: light-dark(rgb(255 255 255 / 22%), rgb(255 255 255 / 4%));
   --gb-glass-regular: light-dark(rgb(255 255 255 / 52%), rgb(255 255 255 / 7%));
-  --gb-glass-thick: light-dark(rgb(255 255 255 / 74%), rgb(22 26 31 / 72%));
+  --gb-glass-thick: light-dark(rgb(247 249 252 / 70%), rgb(22 26 31 / 72%));
   --gb-glass-selected: light-dark(rgb(255 255 255 / 86%), rgb(255 255 255 / 12%));
   --gb-glass-hover: light-dark(rgb(255 255 255 / 48%), rgb(255 255 255 / 7%));
   // A lit top edge and a hairline all round: what makes a translucent fill

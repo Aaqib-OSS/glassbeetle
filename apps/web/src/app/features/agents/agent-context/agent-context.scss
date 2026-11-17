@@ -16,9 +16,10 @@
   gap: 1.5rem;
   flex-wrap: wrap;
   padding: 0.75rem 1rem;
-  border: 1px solid var(--mat-sys-outline-variant);
-  border-radius: 10px;
-  background: var(--mat-sys-surface-container-low);
+  border: 0;
+  border-radius: var(--gb-radius-control);
+  background: var(--gb-glass-regular);
+  box-shadow: var(--gb-glass-rim);
 }
 
 .summary__item {

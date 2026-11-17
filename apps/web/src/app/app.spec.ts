@@ -519,7 +519,7 @@ describe('App shell on a platform whose controls sit on the right', () => {
     fixture.detectChanges();
 
     const element = fixture.nativeElement as HTMLElement;
-    const children = Array.from(element.querySelector('.deck__bar')?.children ?? []);
+    const children = Array.from(element.querySelector('.deck__end--right')?.children ?? []);
     const controls = children.findIndex(
       (child) => child.tagName.toLowerCase() === 'app-window-controls',
     );

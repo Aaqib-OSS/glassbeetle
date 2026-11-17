@@ -103,9 +103,10 @@
   gap: 0.125rem;
   align-self: flex-start;
   padding: 0.1875rem;
-  border: 1px solid var(--mat-sys-outline-variant);
-  border-radius: 8px;
-  background: var(--mat-sys-surface-container-low);
+  border: 0;
+  border-radius: 999px;
+  background: var(--gb-glass-regular);
+  box-shadow: var(--gb-glass-rim);
 }
 
 .tab {
@@ -114,7 +115,7 @@
   gap: 0.375rem;
   padding: 0.3125rem 0.625rem;
   border: 0;
-  border-radius: 6px;
+  border-radius: 999px;
   background: none;
   color: var(--mat-sys-on-surface-variant);
   font: inherit;
@@ -134,7 +135,8 @@
   }
 
   &--active {
-    background: var(--mat-sys-surface-container-high);
+    background: var(--gb-glass-selected);
+    box-shadow: var(--gb-glass-rim), var(--gb-shadow-panel);
     color: var(--mat-sys-on-surface);
     font-weight: 500;
   }
