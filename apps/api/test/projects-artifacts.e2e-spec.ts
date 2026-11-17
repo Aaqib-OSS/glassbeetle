@@ -1,4 +1,4 @@
-import { promises as fs } from 'node:fs';
+import { promises as fs, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
@@ -94,11 +94,14 @@ describe('Projects and Artifacts Integration Test Suite (e2e)', () => {
 
     it('verifies the test harness exposes isolated storage and database paths inside tmpdir, never touching the real data directory', () => {
       const fileStorage = testApp.app.get(FileStorageService);
-      const systemTmp = tmpdir();
+      // macOS exposes /var as an alias of /private/var; compare canonical paths.
+      const systemTmp = realpathSync(tmpdir());
       const realDataDir = resolveDefaultDataDir();
 
       // Test storage root must be inside OS temp dir
-      expect(fileStorage.storageRoot.startsWith(systemTmp)).toBe(true);
+      expect(realpathSync(fileStorage.storageRoot).startsWith(systemTmp)).toBe(
+        true,
+      );
       // Test storage root must never match or be inside the real user data directory
       expect(fileStorage.storageRoot).not.toBe(
         path.resolve(realDataDir, 'storage'),
@@ -107,7 +110,7 @@ describe('Projects and Artifacts Integration Test Suite (e2e)', () => {
       // SQLite database file must also reside in temp dir
       const dbList = testApp.db.get<{ file: string }>('PRAGMA database_list');
       expect(dbList?.file).toBeDefined();
-      expect(dbList!.file.startsWith(systemTmp)).toBe(true);
+      expect(realpathSync(dbList!.file).startsWith(systemTmp)).toBe(true);
     });
   });
 
