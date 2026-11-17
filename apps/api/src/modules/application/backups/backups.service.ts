@@ -128,20 +128,27 @@ export class BackupsService {
     try {
       const targetDir = this.resolveTargetDirectory();
       const archiveFileName = `backup-${id}.tar.gz`;
-      stagingDir = path.join(os.tmpdir(), `glassbeetle-backup-${id}`);
       partialArchivePath = path.join(targetDir, `${archiveFileName}.tmp`);
       finalArchivePath = path.join(targetDir, archiveFileName);
 
       this.checkDiskSpace(targetDir);
 
       // Create staging directories
-      await fs.promises.mkdir(stagingDir, { recursive: true });
+      stagingDir = await fs.promises.mkdtemp(
+        path.join(os.tmpdir(), `glassbeetle-backup-${id}-`),
+      );
+      await fs.promises.chmod(stagingDir, 0o700);
       const stagingFilesDir = path.join(stagingDir, 'files');
-      await fs.promises.mkdir(stagingFilesDir, { recursive: true });
+      await fs.promises.mkdir(stagingFilesDir, {
+        recursive: true,
+        mode: 0o700,
+      });
+      await fs.promises.chmod(stagingFilesDir, 0o700);
 
       // 1. Snapshot database consistently with VACUUM INTO
       const dbSnapshotPath = path.join(stagingDir, 'database.sqlite');
       this.databaseService.db.prepare('VACUUM INTO ?').run(dbSnapshotPath);
+      await fs.promises.chmod(dbSnapshotPath, 0o600);
 
       // 2. Copy file storage tree into files/ and collect inventory
       const fileInventory: BackupFileInventoryItem[] = [];
@@ -164,24 +171,37 @@ export class BackupsService {
         fileInventory,
       };
 
+      const manifestPath = path.join(stagingDir, 'manifest.json');
       await fs.promises.writeFile(
-        path.join(stagingDir, 'manifest.json'),
+        manifestPath,
         JSON.stringify(manifest, null, 2),
-        'utf8',
+        { encoding: 'utf8', mode: 0o600 },
       );
+      await fs.promises.chmod(manifestPath, 0o600);
 
       // 4. Stream archive creation
+      await fs.promises.rm(partialArchivePath, { force: true });
+      const partialArchiveHandle = await fs.promises.open(
+        partialArchivePath,
+        'wx',
+        0o600,
+      );
+      await partialArchiveHandle.close();
+      await fs.promises.chmod(partialArchivePath, 0o600);
+
       await tar.create(
         {
           gzip: true,
           file: partialArchivePath,
           cwd: stagingDir,
+          mode: 0o600,
         },
         ['manifest.json', 'database.sqlite', 'files'],
       );
 
       // Atomic rename of partial archive to final archive
       await fs.promises.rename(partialArchivePath, finalArchivePath);
+      await fs.promises.chmod(finalArchivePath, 0o600);
 
       const stats = await fs.promises.stat(finalArchivePath);
       const sizeBytes = stats.size;
@@ -487,7 +507,10 @@ export class BackupsService {
     // Default fallback under application data directory
     const dataDir = this.appConfigService?.dataDir ?? resolveDefaultDataDir();
     const defaultDir = path.resolve(dataDir, 'backups');
-    mkdirSync(defaultDir, { recursive: true });
+    mkdirSync(defaultDir, { recursive: true, mode: 0o700 });
+    try {
+      fs.chmodSync(defaultDir, 0o700);
+    } catch {}
 
     try {
       fs.accessSync(defaultDir, fs.constants.W_OK);
@@ -596,10 +619,15 @@ export class BackupsService {
       const relArchivePath = `${archivePrefix}/${entry.name}`;
 
       if (entry.isDirectory()) {
-        await fs.promises.mkdir(dstPath, { recursive: true });
+        await fs.promises.mkdir(dstPath, {
+          recursive: true,
+          mode: 0o700,
+        });
+        await fs.promises.chmod(dstPath, 0o700);
         await this.copyStorageTree(srcPath, dstPath, relArchivePath, inventory);
       } else if (entry.isFile()) {
         await fs.promises.copyFile(srcPath, dstPath);
+        await fs.promises.chmod(dstPath, 0o600);
         const stat = await fs.promises.stat(dstPath);
         const content = await fs.promises.readFile(dstPath);
         const sha256 = createHash('sha256').update(content).digest('hex');
