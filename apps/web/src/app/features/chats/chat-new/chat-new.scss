@@ -6,11 +6,48 @@
    sits where the eye lands, a little above centre, and nothing else is on the
    screen. */
 .start {
+  position: relative;
+  isolation: isolate;
   display: flex;
   flex-direction: column;
   align-items: center;
   min-height: 100%;
   padding: clamp(2rem, 18vh, 11rem) 1.25rem 3rem;
+  overflow: hidden;
+}
+
+/* The logo as a watermark: centred behind the composer, faded and feathered
+   at the edges so it dissolves into the surface rather than sitting on it. */
+.start__mark {
+  position: absolute;
+  z-index: -1;
+  top: calc(clamp(2rem, 18vh, 11rem) - 4rem);
+  left: 50%;
+  width: min(34rem, 88vw);
+  height: auto;
+  translate: -50% 0;
+  opacity: 0.14;
+  filter: saturate(0.85) blur(0.5px);
+  mask-image: radial-gradient(closest-side, #000 45%, transparent 100%);
+  pointer-events: none;
+  user-select: none;
+  animation: mark-enter 600ms var(--gb-ease) both;
+
+  :host-context([data-theme='light']) & {
+    opacity: 0.2;
+  }
+}
+
+@keyframes mark-enter {
+  from {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .start__mark {
+    animation: none;
+  }
 }
 
 .start__body {
