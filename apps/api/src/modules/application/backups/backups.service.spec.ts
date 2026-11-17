@@ -444,6 +444,31 @@ describe('BackupsService', () => {
     }
   });
 
+  it('succeeds when a file in storage is deleted concurrently while copying the storage tree', async () => {
+    const picturesDir = path.join(testStorageDir, 'pictures');
+    fs.mkdirSync(picturesDir, { recursive: true });
+    const ephemeralFile = path.join(picturesDir, 'ephemeral.png');
+    fs.writeFileSync(ephemeralFile, 'ephemeral content');
+
+    const originalCopyFile = fs.promises.copyFile.bind(fs.promises);
+    vi.spyOn(fs.promises, 'copyFile').mockImplementation(
+      async (src, dst, ...rest) => {
+        if (
+          typeof src === 'string' &&
+          src.endsWith('ephemeral.png') &&
+          fs.existsSync(src)
+        ) {
+          fs.unlinkSync(src);
+        }
+        return originalCopyFile(src, dst, ...rest);
+      },
+    );
+
+    const result = await backupsService.createBackup();
+    expect(result).toBeDefined();
+    expect(result.hasArchive).toBe(true);
+  });
+
   it('simulates a failure mid-creation; asserts no partial archive remains and no row was recorded', async () => {
     const writeSpy = vi
       .spyOn(fs.promises, 'writeFile')

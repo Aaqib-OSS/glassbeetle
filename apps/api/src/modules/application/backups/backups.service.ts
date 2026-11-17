@@ -617,33 +617,62 @@ export class BackupsService {
       return;
     }
 
-    const entries = await fs.promises.readdir(sourceDir, {
-      withFileTypes: true,
-    });
+    let entries: fs.Dirent[];
+    try {
+      entries = await fs.promises.readdir(sourceDir, {
+        withFileTypes: true,
+      });
+    } catch (error: any) {
+      if (error?.code === 'ENOENT') {
+        return;
+      }
+      throw error;
+    }
+
     for (const entry of entries) {
       const srcPath = path.join(sourceDir, entry.name);
       const dstPath = path.join(targetDir, entry.name);
       const relArchivePath = `${archivePrefix}/${entry.name}`;
 
       if (entry.isDirectory()) {
-        await fs.promises.mkdir(dstPath, {
-          recursive: true,
-          mode: 0o700,
-        });
-        await fs.promises.chmod(dstPath, 0o700);
-        await this.copyStorageTree(srcPath, dstPath, relArchivePath, inventory);
+        try {
+          await fs.promises.mkdir(dstPath, {
+            recursive: true,
+            mode: 0o700,
+          });
+          await fs.promises.chmod(dstPath, 0o700);
+          await this.copyStorageTree(
+            srcPath,
+            dstPath,
+            relArchivePath,
+            inventory,
+          );
+        } catch (error: any) {
+          if (error?.code === 'ENOENT') {
+            continue;
+          }
+          throw error;
+        }
       } else if (entry.isFile()) {
-        await fs.promises.copyFile(srcPath, dstPath);
-        await fs.promises.chmod(dstPath, 0o600);
-        const stat = await fs.promises.stat(dstPath);
-        const content = await fs.promises.readFile(dstPath);
-        const sha256 = createHash('sha256').update(content).digest('hex');
+        try {
+          await fs.promises.copyFile(srcPath, dstPath);
+          await fs.promises.chmod(dstPath, 0o600);
+          const stat = await fs.promises.stat(dstPath);
+          const content = await fs.promises.readFile(dstPath);
+          const sha256 = createHash('sha256').update(content).digest('hex');
 
-        inventory.push({
-          path: relArchivePath,
-          sizeBytes: stat.size,
-          sha256,
-        });
+          inventory.push({
+            path: relArchivePath,
+            sizeBytes: stat.size,
+            sha256,
+          });
+        } catch (error: any) {
+          if (error?.code === 'ENOENT') {
+            await fs.promises.rm(dstPath, { force: true }).catch(() => {});
+            continue;
+          }
+          throw error;
+        }
       }
     }
   }
