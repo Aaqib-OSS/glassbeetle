@@ -14,18 +14,21 @@
         <app-window-controls />
       }
 
-      <button
-        class="glyph"
-        type="button"
-        [class.glyph--on]="railOpen()"
-        [attr.aria-label]="railOpen() ? 'Hide the rail' : 'Show the rail'"
-        [attr.aria-expanded]="railOpen()"
-        [matTooltip]="(railOpen() ? 'Hide the rail' : 'Show the rail') + '  ' + commandKey + 'B'"
-        matTooltipPosition="below"
-        (click)="toggleRail()"
-      >
-        <mat-icon>{{ railOpen() ? 'left_panel_close' : 'left_panel_open' }}</mat-icon>
-      </button>
+      <!-- While the rail is open its toggle lives in the rail's foot; only a
+           closed rail needs a way back from up here. -->
+      @if (!railOpen()) {
+        <button
+          class="glyph"
+          type="button"
+          aria-label="Show the rail"
+          aria-expanded="false"
+          [matTooltip]="'Show the rail  ' + commandKey + 'B'"
+          matTooltipPosition="below"
+          (click)="toggleRail()"
+        >
+          <mat-icon>left_panel_open</mat-icon>
+        </button>
+      }
     </div>
 
     <!-- Centred on the window, as a search field is on the Mac: reads as a
@@ -85,7 +88,11 @@
   }
 
   <nav class="rail" [class.rail--overlay]="!wideLayout()" aria-label="Workspace">
-    <app-conversation-rail [commandKey]="commandKey" (navigated)="closeRailOnNarrow()" />
+    <app-conversation-rail
+      [commandKey]="commandKey"
+      (navigated)="closeRailOnNarrow()"
+      (hide)="toggleRail()"
+    />
   </nav>
 
   <!-- The routed surface scrolls as a whole for a page, and not at all for a

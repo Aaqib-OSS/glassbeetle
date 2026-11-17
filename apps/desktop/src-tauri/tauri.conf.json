@@ -24,12 +24,14 @@
         "transparent": true,
         "windowEffects": {
           "effects": [
+            "liquidGlassRegular",
             "hudWindow",
             "acrylic"
           ],
           "state": "followsWindowActiveState",
-          "radius": 14
-        }
+          "radius": 32
+        },
+        "shadow": false
       }
     ],
     "security": {

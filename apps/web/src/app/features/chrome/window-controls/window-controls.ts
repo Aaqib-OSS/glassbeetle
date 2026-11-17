@@ -10,8 +10,8 @@ import { DesktopService } from '../../../core/desktop/desktop.service';
  * they are the only ones there are. They keep the platform's *position* and
  * order (close first on the left on macOS, close last on the right elsewhere)
  * because that is muscle memory worth more than symmetry. The look is the
- * Mac's: three coloured lights whose glyphs appear only while the cursor is
- * over the group.
+ * Mac's three coloured lights, drawn larger and with their glyphs always
+ * showing, so what each one does never has to be discovered by hovering.
  */
 @Component({
   selector: 'app-window-controls',

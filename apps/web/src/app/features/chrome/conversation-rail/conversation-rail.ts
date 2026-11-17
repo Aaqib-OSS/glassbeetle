@@ -129,6 +129,9 @@ export class ConversationRail {
   /** Emitted when a link is followed, so a rail lying over the content closes. */
   readonly navigated = output<void>();
 
+  /** Emitted when the rail's own toggle in its foot asks to put it away. */
+  readonly hide = output<void>();
+
   protected readonly primaryLinks = PRIMARY_LINKS;
   protected readonly workspaceLinks = WORKSPACE_LINKS;
 

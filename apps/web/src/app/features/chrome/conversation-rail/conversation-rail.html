@@ -205,8 +205,9 @@
   }
 </section>
 
-<!-- The foot of the rail: the three things about the app rather than about
-     the work — its settings, its appearance and whether it speaks up. -->
+<!-- The foot of the rail: the things about the app rather than about the
+     work — its settings, its appearance, whether it speaks up, and putting
+     the rail itself away. -->
 <footer class="foot">
   <app-workspace-menu gear />
 
@@ -236,5 +237,17 @@
     (click)="notifications.toggleMuted()"
   >
     <mat-icon>{{ notifications.muted() ? 'notifications_off' : 'notifications' }}</mat-icon>
+  </button>
+
+  <button
+    class="foot__button foot__button--end"
+    type="button"
+    aria-label="Hide the rail"
+    aria-expanded="true"
+    [matTooltip]="'Hide the rail  ' + commandKey() + 'B'"
+    matTooltipPosition="above"
+    (click)="hide.emit()"
+  >
+    <mat-icon>left_panel_close</mat-icon>
   </button>
 </footer>
