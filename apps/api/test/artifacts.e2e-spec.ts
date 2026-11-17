@@ -320,6 +320,94 @@ describe('Artifacts Endpoints (e2e)', () => {
       expect(res.body.filePath).toBeUndefined();
     });
 
+    it('rejects a filePath that escapes the storage root (400)', async () => {
+      for (const filePath of [
+        '../outside.txt',
+        'artifacts/../../../etc/passwd',
+        '/etc/passwd',
+        'C:\\Windows\\System32\\cmd.exe',
+      ]) {
+        const res = await testApp
+          .request()
+          .post('/api/v1/artifacts')
+          .send({
+            title: 'Escaping Artifact',
+            type: 'file',
+            filePath,
+          })
+          .expect(400);
+
+        expect(res.body.statusCode).toBe(400);
+      }
+
+      expect(
+        testApp.db.get<{ count: number }>(
+          'SELECT COUNT(*) as count FROM artifacts',
+        )!.count,
+      ).toBe(0);
+    });
+
+    it('rejects a filePath already owned by another artifact (400)', async () => {
+      const fileStorage = testApp.app.get(FileStorageService);
+      const stored = await fileStorage.write(
+        'artifacts',
+        Buffer.from('Owned by the first artifact'),
+      );
+
+      const first = await testApp
+        .request()
+        .post('/api/v1/artifacts')
+        .send({
+          title: 'Original Owner',
+          type: 'file',
+          filePath: stored.reference,
+        })
+        .expect(201);
+
+      await testApp
+        .request()
+        .post('/api/v1/artifacts')
+        .send({
+          title: 'Impostor',
+          type: 'file',
+          filePath: stored.reference,
+        })
+        .expect(400);
+
+      expect(
+        testApp.db.get<{ count: number }>(
+          'SELECT COUNT(*) as count FROM artifacts',
+        )!.count,
+      ).toBe(1);
+
+      await testApp
+        .request()
+        .delete(`/api/v1/artifacts/${first.body.id}`)
+        .expect(204);
+      expect(await fileStorage.exists(stored.reference)).toBe(false);
+    });
+
+    it('rejects a filePath already owned by another record (400)', async () => {
+      const fileStorage = testApp.app.get(FileStorageService);
+      const stored = await fileStorage.write(
+        'project-images',
+        Buffer.from('Owned by a project'),
+      );
+      testApp.fixtures.createProject({ image_path: stored.reference });
+
+      await testApp
+        .request()
+        .post('/api/v1/artifacts')
+        .send({
+          title: 'Project Image Claim',
+          type: 'file',
+          filePath: stored.reference,
+        })
+        .expect(400);
+
+      expect(await fileStorage.exists(stored.reference)).toBe(true);
+    });
+
     it('creates an artifact linked to existing project, chat, and agent', async () => {
       const project = testApp.fixtures.createProject();
       const chat = testApp.fixtures.createChat();
@@ -616,6 +704,35 @@ describe('Artifacts Endpoints (e2e)', () => {
       expect(res.body.version).toBe(2);
     });
 
+    it('rejects updating an artifact to claim a file owned by another record (400)', async () => {
+      const fileStorage = testApp.app.get(FileStorageService);
+      const stored = await fileStorage.write(
+        'project-images',
+        Buffer.from('Owned by a project'),
+      );
+      testApp.fixtures.createProject({ image_path: stored.reference });
+      const artifact = testApp.fixtures.createArtifact({
+        content: 'Inline content',
+        file_path: null,
+      });
+
+      await testApp
+        .request()
+        .patch(`/api/v1/artifacts/${artifact.id}`)
+        .send({ content: null, filePath: stored.reference })
+        .expect(400);
+
+      expect(await fileStorage.exists(stored.reference)).toBe(true);
+      const row = testApp.db.get<{ file_path: string | null; content: string }>(
+        'SELECT file_path, content FROM artifacts WHERE id = ?',
+        [artifact.id],
+      );
+      expect(row).toMatchObject({
+        file_path: null,
+        content: 'Inline content',
+      });
+    });
+
     it('preserves old backing file in history when replacing file artifact with inline content, and cleans it up on delete', async () => {
       const fileStorage = testApp.app.get(FileStorageService);
       const deleteSpy = vi.spyOn(fileStorage, 'delete');
@@ -723,6 +840,26 @@ describe('Artifacts Endpoints (e2e)', () => {
         .request()
         .get(`/api/v1/artifacts/${created.id}`)
         .expect(404);
+    });
+
+    it('never unlinks a file owned by another record', async () => {
+      const fileStorage = testApp.app.get(FileStorageService);
+      const stored = await fileStorage.write(
+        'project-images',
+        Buffer.from('Owned by a project'),
+      );
+      testApp.fixtures.createProject({ image_path: stored.reference });
+      const artifact = testApp.fixtures.createArtifact({
+        content: null,
+        file_path: stored.reference,
+      });
+
+      await testApp
+        .request()
+        .delete(`/api/v1/artifacts/${artifact.id}`)
+        .expect(204);
+
+      expect(await fileStorage.exists(stored.reference)).toBe(true);
     });
 
     it('returns 400 Bad Request for invalid UUIDv7', async () => {
