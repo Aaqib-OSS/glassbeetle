@@ -168,6 +168,15 @@
       "contributions": [
         "code"
       ]
+    },
+    {
+      "login": "Vic-Lara-Gilles",
+      "name": "Victor Rodrigo Lara Gilles",
+      "avatar_url": "https://avatars.githubusercontent.com/u/243657767?v=4",
+      "profile": "https://www.vlgilles.me",
+      "contributions": [
+        "code"
+      ]
     }
   ],
   "commitType": "docs",

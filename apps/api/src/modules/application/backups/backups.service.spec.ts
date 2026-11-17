@@ -219,6 +219,7 @@ describe('BackupsService', () => {
   });
 
   describe('file permissions', () => {
+    // POSIX modes; Windows does not report them.
     const posixIt = process.platform === 'win32' ? it.skip : it;
 
     posixIt(

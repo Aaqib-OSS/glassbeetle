@@ -133,7 +133,11 @@ export class BackupsService {
 
       this.checkDiskSpace(targetDir);
 
-      // Create staging directories
+      // Create staging directories. The staging copy holds the full
+      // database snapshot and every stored file, and os.tmpdir() is the
+      // shared /tmp on Linux, so it must be owner-only. mkdtemp creates the
+      // directory with 0o700 under an unpredictable name; the chmod is the
+      // same belt-and-braces that encryption.service.ts uses for master.key.
       stagingDir = await fs.promises.mkdtemp(
         path.join(os.tmpdir(), `glassbeetle-backup-${id}-`),
       );
@@ -179,14 +183,17 @@ export class BackupsService {
       );
       await fs.promises.chmod(manifestPath, 0o600);
 
-      // 4. Stream archive creation
+      // 4. Stream archive creation. Create the archive file owner-only
+      // (0o600) before tar writes to it, so it is never readable by other
+      // accounts, not even while it is being written. tar truncates the
+      // existing file and keeps its mode, and the rename below keeps it too.
       await fs.promises.rm(partialArchivePath, { force: true });
-      const partialArchiveHandle = await fs.promises.open(
+      const partialHandle = await fs.promises.open(
         partialArchivePath,
         'wx',
         0o600,
       );
-      await partialArchiveHandle.close();
+      await partialHandle.close();
       await fs.promises.chmod(partialArchivePath, 0o600);
 
       await tar.create(
