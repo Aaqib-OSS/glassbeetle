@@ -225,6 +225,10 @@ export class App implements OnInit {
     // paint is never visible as a white flash.
     afterNextRender(() => void this.desktop.signalReady());
 
+    // The desktop window is transparent and the OS blurs what is behind it;
+    // the page then tints that glass rather than painting a backdrop of its own.
+    document.documentElement.classList.toggle('gb-desktop', this.desktop.isDesktop);
+
     this.router.events
       .pipe(
         filter((event) => event instanceof NavigationEnd),

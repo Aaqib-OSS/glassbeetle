@@ -20,12 +20,22 @@
         "resizable": true,
         "fullscreen": false,
         "visible": false,
-        "decorations": false
+        "decorations": false,
+        "transparent": true,
+        "windowEffects": {
+          "effects": [
+            "hudWindow",
+            "acrylic"
+          ],
+          "state": "followsWindowActiveState",
+          "radius": 14
+        }
       }
     ],
     "security": {
       "csp": null
-    }
+    },
+    "macOSPrivateApi": true
   },
   "bundle": {
     "active": true,

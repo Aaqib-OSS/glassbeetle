@@ -1,0 +1,38 @@
+// Liquid glass: a translucent fill that blurs and saturates whatever lies
+// behind it, lit along its top edge and lifted by a soft shadow.
+//
+// `$fill` picks how much of the backdrop shows through: `clear` for chrome
+// that should all but disappear into the window, `regular` for controls, and
+// `thick` for surfaces that carry text people read.
+
+@mixin glass($fill: regular, $radius: null, $lifted: true) {
+  @if $fill == clear {
+    background: var(--gb-glass-clear);
+  } @else if $fill == thick {
+    background: var(--gb-glass-thick);
+  } @else {
+    background: var(--gb-glass-regular);
+  }
+
+  backdrop-filter: var(--gb-glass-blur);
+  -webkit-backdrop-filter: var(--gb-glass-blur);
+
+  @if $radius {
+    border-radius: $radius;
+  }
+
+  @if $lifted {
+    box-shadow:
+      var(--gb-glass-rim),
+      var(--gb-glass-shadow);
+  } @else {
+    box-shadow: var(--gb-glass-rim);
+  }
+}
+
+// The pressed-in look of a selected row on glass: a little more fill, the
+// same lit rim, no shadow.
+@mixin glass-selected {
+  background: var(--gb-glass-selected);
+  box-shadow: var(--gb-glass-rim);
+}
