@@ -5,7 +5,7 @@
     routerLinkActive="start__button--active"
     (click)="navigated.emit()"
   >
-    <mat-icon class="start__icon">edit_square</mat-icon>
+    <mat-icon class="start__icon">add_circle</mat-icon>
     <span class="start__label">New chat</span>
     <kbd class="start__key">{{ commandKey() }}N</kbd>
   </a>
@@ -204,3 +204,37 @@
     </ul>
   }
 </section>
+
+<!-- The foot of the rail: the three things about the app rather than about
+     the work — its settings, its appearance and whether it speaks up. -->
+<footer class="foot">
+  <app-workspace-menu gear />
+
+  <button
+    class="foot__button"
+    type="button"
+    [attr.aria-label]="theme.mode() === 'dark' ? 'Switch to light' : 'Switch to dark'"
+    [matTooltip]="
+      (theme.mode() === 'dark' ? 'Light' : 'Dark') + ' appearance  ' + commandKey() + '⇧L'
+    "
+    matTooltipPosition="above"
+    (click)="theme.toggle()"
+  >
+    <mat-icon>{{ theme.mode() === 'dark' ? 'light_mode' : 'dark_mode' }}</mat-icon>
+  </button>
+
+  <button
+    class="foot__button"
+    type="button"
+    [class.foot__button--off]="notifications.muted()"
+    [attr.aria-pressed]="!notifications.muted()"
+    aria-label="Notifications"
+    [matTooltip]="
+      notifications.muted() ? 'Notifications off — errors still show' : 'Notifications on'
+    "
+    matTooltipPosition="above"
+    (click)="notifications.toggleMuted()"
+  >
+    <mat-icon>{{ notifications.muted() ? 'notifications_off' : 'notifications' }}</mat-icon>
+  </button>
+</footer>

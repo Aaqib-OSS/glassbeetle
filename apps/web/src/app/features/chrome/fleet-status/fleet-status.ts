@@ -65,11 +65,7 @@ const RING = 2 * Math.PI * 7;
               matTooltipPosition="below"
               (click)="open(entry.agent.id)"
             >
-              <app-agent-avatar
-                [name]="entry.agent.name"
-                [agent]="entry.agent"
-                size="small"
-              />
+              <app-agent-avatar [name]="entry.agent.name" [agent]="entry.agent" size="small" />
             </button>
           }
 

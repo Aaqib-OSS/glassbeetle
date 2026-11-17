@@ -1,12 +1,12 @@
+@use '../../../shared/styles/glass';
+
 .fleet {
   display: flex;
   align-items: center;
   gap: 0.375rem;
-  height: 1.75rem;
+  height: 2rem;
   padding: 0 0.375rem 0 0.25rem;
-  border-radius: 999px;
-  background: var(--mat-sys-surface-container-lowest);
-  box-shadow: inset 0 0 0 1px var(--mat-sys-outline-variant);
+  @include glass.glass(regular, 999px, false);
 }
 
 .fleet__gauge {
@@ -107,7 +107,7 @@
   app-agent-avatar {
     /* A hairline in the bar's own colour separates the overlapped avatars. */
     border-radius: 999px;
-    box-shadow: 0 0 0 1.5px var(--mat-sys-surface-container-lowest);
+    box-shadow: 0 0 0 1.5px var(--gb-glass-thick);
   }
 }
 
@@ -118,7 +118,7 @@
   border: 0;
   border-radius: 999px;
   background: var(--mat-sys-surface-container-high);
-  box-shadow: 0 0 0 1.5px var(--mat-sys-surface-container-lowest);
+  box-shadow: 0 0 0 1.5px var(--gb-glass-thick);
   color: var(--mat-sys-on-surface-variant);
   font: inherit;
   font-size: 0.625rem;

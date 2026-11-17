@@ -1,21 +1,21 @@
+@use '../../../shared/styles/glass';
+
 .meter {
   display: flex;
   flex: none;
   align-items: center;
   gap: 0.3125rem;
-  height: 1.75rem;
+  height: 2rem;
   padding: 0 0.5rem 0 0.25rem;
   border: 0;
-  border-radius: 999px;
-  background: var(--mat-sys-surface-container-lowest);
-  box-shadow: inset 0 0 0 1px var(--mat-sys-outline-variant);
+  @include glass.glass(regular, 999px, false);
   color: inherit;
   font: inherit;
   cursor: pointer;
   transition: box-shadow 120ms var(--gb-ease);
 
   &:hover {
-    box-shadow: inset 0 0 0 1px var(--mat-sys-outline);
+    background: var(--gb-glass-selected);
   }
 
   &:focus-visible {

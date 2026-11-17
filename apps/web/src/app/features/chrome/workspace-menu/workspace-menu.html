@@ -5,15 +5,20 @@
   #origin="cdkOverlayOrigin"
   [class.trigger--open]="open()"
   [class.trigger--flush]="flush()"
+  [class.trigger--gear]="gear()"
   [attr.aria-expanded]="open()"
   aria-haspopup="dialog"
-  aria-label="Workspace"
+  [attr.aria-label]="gear() ? 'Settings' : 'Workspace'"
   (click)="toggle()"
 >
-  <span class="mark" aria-hidden="true">
-    <span class="mark__core"></span>
-  </span>
-  <span class="trigger__name">Glassbeetle</span>
+  @if (gear()) {
+    <mat-icon class="trigger__gear">settings</mat-icon>
+  } @else {
+    <span class="mark" aria-hidden="true">
+      <span class="mark__core"></span>
+    </span>
+    <span class="trigger__name">Glassbeetle</span>
+  }
   <span
     class="trigger__state"
     [class]="'trigger__state--' + status.state()"
@@ -25,7 +30,7 @@
   cdkConnectedOverlay
   [cdkConnectedOverlayOrigin]="origin"
   [cdkConnectedOverlayOpen]="open()"
-  [cdkConnectedOverlayOffsetY]="6"
+  [cdkConnectedOverlayPositions]="gear() ? abovePositions : belowPositions"
   [cdkConnectedOverlayHasBackdrop]="true"
   cdkConnectedOverlayBackdropClass="cdk-overlay-transparent-backdrop"
   (backdropClick)="close()"

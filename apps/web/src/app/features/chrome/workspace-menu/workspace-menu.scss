@@ -1,3 +1,5 @@
+@use '../../../shared/styles/glass';
+
 /* ── The mark ─────────────────────────────────────────────────────────── */
 
 /* Drawn rather than an image asset: a facetted lozenge with a lit core, which
@@ -77,6 +79,43 @@
   }
 }
 
+/* The gear at the foot of the rail: a bare glyph, like its two neighbours,
+   with the backend's state as a dot on its shoulder. */
+.trigger--gear {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  color: var(--gb-glass-ink);
+
+  &:hover,
+  &.trigger--open {
+    @include glass.glass-selected;
+  }
+
+  .trigger__state {
+    position: absolute;
+    top: 0.3125rem;
+    right: 0.3125rem;
+    box-shadow: 0 0 0 1.5px var(--gb-glass-thick);
+  }
+}
+
+.trigger__gear {
+  font-size: 1.1875rem;
+  width: 1.1875rem;
+  height: 1.1875rem;
+  transition: transform 420ms var(--gb-spring);
+
+  .trigger--open & {
+    transform: rotate(60deg);
+  }
+}
+
 .trigger__name {
   font-size: 0.8125rem;
   font-weight: 600;
@@ -107,10 +146,7 @@
 
 .panel {
   width: 19rem;
-  border: 1px solid var(--mat-sys-outline-variant);
-  border-radius: 12px;
-  background: var(--mat-sys-surface-container-low);
-  box-shadow: var(--gb-shadow-raised);
+  @include glass.glass(thick, var(--gb-radius-sheet));
   overflow: hidden;
   animation: panel-in 140ms var(--gb-ease) both;
 }
@@ -127,7 +163,6 @@
   align-items: center;
   gap: 0.625rem;
   padding: 0.875rem;
-  background: var(--mat-sys-surface-container);
   border-bottom: 1px solid var(--mat-sys-outline-variant);
 }
 

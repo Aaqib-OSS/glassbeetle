@@ -6,11 +6,14 @@ import { NavigationEnd, Router, RouterLink, RouterLinkActive } from '@angular/ro
 import { filter, map } from 'rxjs';
 
 import { ownerOf, titleOf, type Chat } from '../../../core/api/chats.models';
+import { NotificationService } from '../../../core/notifications/notification.service';
+import { ThemeService } from '../../../core/theme/theme.service';
 import { AgentRosterService } from '../../../core/workspace/agent-roster.service';
 import { ChatRunsService } from '../../../core/workspace/chat-runs.service';
 import { ConversationsService } from '../../../core/workspace/conversations.service';
 import { RelativeTimePipe } from '../../../shared/relative-time/relative-time.pipe';
 import { Skeleton } from '../../../shared/ui/skeleton';
+import { WorkspaceMenu } from '../workspace-menu/workspace-menu';
 
 /** A destination in the rail, with the digit it answers to. */
 export interface RailLink {
@@ -59,8 +62,9 @@ export const PRIMARY_LINKS: readonly RailLink[] = [
 
 /**
  * What agents are configured from, and how the workspace is doing. Needed,
- * but not where the work happens — so they sit folded at the foot of the rail
- * instead of sharing its first rows with the conversations.
+ * but not where the work happens — so they sit at the foot of the rail, where
+ * they can be folded away, instead of sharing its first rows with the
+ * conversations.
  */
 export const WORKSPACE_LINKS: readonly RailLink[] = [
   { path: '/teams', label: 'Teams', icon: 'groups', shortcut: '5' },
@@ -106,6 +110,7 @@ function writeStored(key: string, value: string): void {
     RouterLink,
     RouterLinkActive,
     Skeleton,
+    WorkspaceMenu,
   ],
   templateUrl: './conversation-rail.html',
   styleUrl: './conversation-rail.scss',
@@ -115,6 +120,8 @@ export class ConversationRail {
   private readonly roster = inject(AgentRosterService);
   private readonly runs = inject(ChatRunsService);
   protected readonly conversations = inject(ConversationsService);
+  protected readonly theme = inject(ThemeService);
+  protected readonly notifications = inject(NotificationService);
 
   /** The platform's command key, as the shell renders it. */
   readonly commandKey = input('');
@@ -131,7 +138,9 @@ export class ConversationRail {
     new Set((readStored(COLLAPSED_KEY) ?? '').split(',').filter(Boolean)),
   );
 
-  private readonly workspaceUnfolded = signal(readStored(WORKSPACE_KEY) === 'open');
+  // Open unless the user folded it: the configuration surfaces are few enough
+  // to list, and a list is quicker to scan than a fold is to open.
+  private readonly workspaceUnfolded = signal(readStored(WORKSPACE_KEY) !== 'closed');
 
   private readonly url = toSignal(
     this.router.events.pipe(

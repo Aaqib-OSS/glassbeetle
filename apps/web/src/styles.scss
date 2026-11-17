@@ -248,9 +248,7 @@ pre,
   border-radius: var(--gb-radius-sheet) !important;
   backdrop-filter: var(--gb-glass-blur);
   -webkit-backdrop-filter: var(--gb-glass-blur);
-  box-shadow:
-    var(--gb-glass-rim),
-    var(--gb-shadow-raised) !important;
+  box-shadow: var(--gb-glass-rim), var(--gb-shadow-raised) !important;
 }
 
 // The command palette supplies its own chrome, so the dialog around it is only
@@ -284,9 +282,7 @@ pre,
   border-radius: var(--gb-radius-control) !important;
   backdrop-filter: var(--gb-glass-blur);
   -webkit-backdrop-filter: var(--gb-glass-blur);
-  box-shadow:
-    var(--gb-glass-rim),
-    var(--gb-shadow-raised) !important;
+  box-shadow: var(--gb-glass-rim), var(--gb-shadow-raised) !important;
 }
 
 .mat-mdc-snack-bar-container .mdc-snackbar__surface {

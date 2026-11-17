@@ -1,3 +1,5 @@
+@use 'shared/styles/glass';
+
 :host {
   display: flex;
   flex-direction: column;
@@ -7,13 +9,12 @@
 
 /* ── The deck (window chrome) ─────────────────────────────────────────── */
 
+/* Clear glass: no fill of its own, so the window's glass runs unbroken from
+   the title bar down the rail. */
 .deck {
   display: flex;
   flex-direction: column;
   flex: none;
-  /* A touch lighter than the rail below it, so the chrome reads as the lid of
-     the window rather than as another panel. */
-  background: var(--mat-sys-surface-container);
   /* Nothing in a draggable strip should be selectable: a double-click would
      otherwise highlight the label under the cursor instead of zooming. */
   user-select: none;
@@ -22,86 +23,63 @@
 .deck__bar {
   display: flex;
   align-items: center;
-  gap: 0.375rem;
+  gap: 0.5rem;
   height: var(--gb-topbar-height);
-  padding: 0 0.4375rem;
+  padding: 0 0.75rem;
 }
 
-/* The left cluster: the rail toggle and the workspace control in one capsule,
-   built from the same pill-and-inset-ring the window controls use, so the deck
-   reads as a row of instruments rather than a row of loose buttons. */
-.cluster {
+/* The two ends share the bar's free space equally, which keeps the search
+   field centred on the window however much each end carries. Their own empty
+   surface is where the window is grabbed. */
+.deck__end {
   display: flex;
   align-items: center;
-  gap: 0.125rem;
-  flex: none;
-  height: 1.75rem;
-  padding: 0 0.125rem;
-  border-radius: 999px;
-  background: var(--mat-sys-surface-container-lowest);
-  box-shadow: inset 0 0 0 1px var(--mat-sys-outline-variant);
+  gap: 0.5rem;
+  flex: 1 1 0;
+  align-self: stretch;
+  min-width: max-content;
+
+  &--right {
+    justify-content: flex-end;
+  }
 }
 
-.cluster__toggle {
+/* A bare glyph on the glass, as a toolbar button on the Mac: no capsule until
+   the cursor is over it. */
+.glyph {
   display: grid;
   place-items: center;
-  width: 1.5rem;
-  height: 1.5rem;
+  flex: none;
+  width: 1.875rem;
+  height: 1.875rem;
   padding: 0;
   border: 0;
-  border-radius: 999px;
+  border-radius: 9px;
   background: none;
-  color: var(--mat-sys-on-surface-variant);
+  color: var(--gb-glass-ink);
   cursor: pointer;
   transition:
-    background-color 110ms var(--gb-ease),
-    color 110ms var(--gb-ease);
+    background-color 140ms var(--gb-ease),
+    color 140ms var(--gb-ease);
 
   mat-icon {
-    font-size: 1rem;
-    width: 1rem;
-    height: 1rem;
+    font-size: 1.125rem;
+    width: 1.125rem;
+    height: 1.125rem;
   }
 
   &:hover {
-    background: var(--mat-sys-surface-container-high);
-    color: var(--mat-sys-on-surface);
+    @include glass.glass-selected;
   }
 
-  /* Lit while the rail is showing, so the glyph reports state rather than
-     only offering an action. */
   &--on {
     color: var(--mat-sys-primary);
   }
 
   &:focus-visible {
     outline: 2px solid var(--mat-sys-primary);
-    outline-offset: -2px;
+    outline-offset: 1px;
   }
-}
-
-.cluster__divider {
-  width: 1px;
-  height: 1rem;
-  background: var(--mat-sys-outline-variant);
-}
-
-/* A hairline marking where the window's own controls end and the product
-   begins — the one seam in the chrome that is structural rather than cosmetic. */
-.deck__seam {
-  flex: none;
-  width: 1px;
-  height: 1.125rem;
-  margin: 0 0.25rem;
-  background: var(--mat-sys-outline-variant);
-}
-
-/* Grabbable surface. Two of them — this and the trail — keep a reliable place
-   to move the window however full the deck gets. */
-.deck__grip {
-  flex: 1 1 0;
-  align-self: stretch;
-  min-width: 0.75rem;
 }
 
 /* ── Resize edges ─────────────────────────────────────────────────────── */
@@ -179,83 +157,37 @@
   cursor: nwse-resize;
 }
 
-/* ── Location trail ───────────────────────────────────────────────────── */
-
-.trail {
-  display: flex;
-  align-items: center;
-  gap: 0.3125rem;
-  min-width: 0;
-  margin-left: 0.0625rem;
-  padding: 0.25rem;
-  font-size: 0.75rem;
-
-  @media (max-width: 46rem) {
-    display: none;
-  }
-}
-
-.trail__link {
-  color: var(--mat-sys-on-surface-variant);
-  text-decoration: none;
-  border-radius: 4px;
-
-  &:hover {
-    color: var(--mat-sys-on-surface);
-  }
-
-  &:focus-visible {
-    outline: 2px solid var(--mat-sys-primary);
-    outline-offset: 2px;
-  }
-}
-
-.trail__sep {
-  color: var(--mat-sys-outline);
-}
-
-.trail__here {
-  overflow: hidden;
-  max-width: 18rem;
-  color: var(--mat-sys-on-surface);
-  font-weight: 500;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 /* ── Command trigger ──────────────────────────────────────────────────── */
 
 /* Reads as a field but is a button: it opens the palette rather than filtering
-   anything where it stands. */
+   anything where it stands. A capsule of regular glass, centred on the bar. */
 .command {
   display: flex;
   align-items: center;
-  gap: 0.4375rem;
-  /* Allowed to grow into the deck's free space rather than hugging its label,
-     which left it looking like a button pretending to be a field. */
-  flex: 0 1 24rem;
-  min-width: 7rem;
-  height: 1.75rem;
-  /* The right padding clears the pill's own curve. At 28px high the radius is
-     14px, so a cap inset only 5px sits almost on the arc — which is what made
-     it look wedged in rather than placed. */
-  padding: 0 0.5rem 0 0.75rem;
+  gap: 0.5rem;
+  flex: 0 1 26rem;
+  min-width: 2.25rem;
+  height: 2rem;
+  padding: 0 0.375rem 0 0.75rem;
   border: 0;
-  border-radius: 999px;
-  background: var(--mat-sys-surface-container-lowest);
-  box-shadow: inset 0 0 0 1px var(--mat-sys-outline-variant);
+  @include glass.glass(regular, 999px, false);
   color: var(--mat-sys-on-surface-variant);
   font: inherit;
-  font-size: 0.75rem;
+  font-size: 0.8125rem;
   text-align: left;
   cursor: pointer;
   transition:
-    box-shadow 120ms var(--gb-ease),
-    color 120ms var(--gb-ease);
+    background-color 160ms var(--gb-ease),
+    color 160ms var(--gb-ease),
+    transform 220ms var(--gb-spring);
 
   &:hover {
-    box-shadow: inset 0 0 0 1px var(--mat-sys-outline);
+    background: var(--gb-glass-selected);
     color: var(--mat-sys-on-surface);
+  }
+
+  &:active {
+    transform: scale(0.985);
   }
 
   &:hover .command__icon {
@@ -277,36 +209,30 @@
 
 .command__icon {
   flex: none;
-  font-size: 0.9375rem;
-  width: 0.9375rem;
-  height: 0.9375rem;
+  font-size: 1.0625rem;
+  width: 1.0625rem;
+  height: 1.0625rem;
   transition: color 120ms var(--gb-ease);
 }
 
-/* A key cap. Kept a rounded rectangle rather than a pill so it still reads as
-   a key inside a pill-shaped field, with enough tracking that the ⌘ glyph and
-   the letter are two symbols rather than one blob at 11px. The field's right
-   padding clears the pill's own curve: at 28px high its radius is 14px, so a
-   cap inset only 5px sat almost on the arc and looked wedged in. */
+/* A key cap, inset in the field like the shortcut in a Mac search field. */
 .command__key {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex: none;
-  height: 1.25rem;
-  min-width: 1.75rem;
-  padding: 0 0.375rem;
-  border-radius: 5px;
-  background: var(--mat-sys-surface-container-highest);
-  box-shadow: inset 0 0 0 1px var(--mat-sys-outline-variant);
+  height: 1.375rem;
+  min-width: 2rem;
+  padding: 0 0.4375rem;
+  border-radius: 999px;
+  background: var(--gb-glass-clear);
+  box-shadow: var(--gb-glass-rim);
   color: var(--mat-sys-on-surface-variant);
   font-family: var(--gb-font-mono);
   font-size: 0.6875rem;
   font-weight: 500;
   line-height: 1;
   letter-spacing: 0.08em;
-  /* Tracking also adds space after the final glyph, which would sit the text
-     off-centre; the indent gives it back on the left. */
   text-indent: 0.08em;
   white-space: nowrap;
 }
@@ -318,7 +244,10 @@
   }
 
   .command {
-    padding: 0.375rem;
+    flex: none;
+    justify-content: center;
+    width: 2rem;
+    padding: 0;
   }
 }
 
@@ -329,15 +258,15 @@
   display: flex;
   flex: 1;
   min-height: 0;
+  padding: 0 0.625rem 0.625rem 0;
 }
 
+/* The rail is the window's clear glass, the same pane as the deck above it. */
 .rail {
   display: flex;
   flex-direction: column;
   flex: none;
   width: var(--gb-rail-width);
-  border-right: 1px solid var(--mat-sys-outline-variant);
-  background: var(--mat-sys-surface-container-low);
   overflow: hidden;
   /* The rail's entries are places and conversations, not text to select. */
   user-select: none;
@@ -346,19 +275,28 @@
 /* Collapsed by margin rather than by removal so the rail slides instead of
    popping, and so its scroll position survives a toggle. */
 .workspace:not(.workspace--rail-open) .rail {
-  margin-left: calc(var(--gb-rail-width) * -1);
+  margin-left: calc(var(--gb-rail-width) * -1 + 0.625rem);
+  opacity: 0;
 }
 
 .rail,
 .workspace:not(.workspace--rail-open) .rail {
-  transition: margin-left 180ms var(--gb-ease);
+  transition:
+    margin-left 260ms var(--gb-ease),
+    opacity 200ms var(--gb-ease);
 }
 
+/* On a narrow window the rail floats over the sheet as a glass panel of its
+   own instead of pushing it aside. */
 .rail--overlay {
   position: absolute;
-  inset: 0 auto 0 0;
+  inset: 0 auto 0.625rem 0.625rem;
   z-index: 3;
-  box-shadow: var(--gb-shadow-raised);
+  @include glass.glass(thick, var(--gb-radius-sheet));
+}
+
+.workspace:not(.workspace--rail-open) .rail--overlay {
+  margin-left: calc(var(--gb-rail-width) * -1 - 1rem);
 }
 
 .scrim {
@@ -367,20 +305,42 @@
   z-index: 2;
   border: 0;
   padding: 0;
-  background: light-dark(rgb(16 21 26 / 24%), rgb(0 0 0 / 55%));
+  background: light-dark(rgb(30 40 60 / 14%), rgb(0 0 0 / 45%));
   cursor: default;
 }
 
-/* ── Routed surface ──────────────────────────────────────────────────── */
+/* ── The sheet ───────────────────────────────────────────────────────── */
+
+/* Thick glass laid on the window: rounded, lit along its rim, and dense
+   enough that text on it reads as on paper. */
+.sheet {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  @include glass.glass(thick, var(--gb-radius-sheet));
+}
+
+.workspace:not(.workspace--rail-open) .sheet {
+  margin-left: 0.625rem;
+}
+
+.sheet__spine {
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: 1;
+  opacity: 0.8;
+}
 
 .surface {
   /* A containing block for a surface that fills it rather than flowing: a
      conversation is as tall as the window, however long its transcript. */
   position: relative;
   flex: 1;
-  min-width: 0;
+  min-height: 0;
   overflow-y: auto;
-  background: var(--mat-sys-surface);
 
   /* Focused by the shell after each navigation so the next Tab starts in the
      content. It is a region, not a control, so it takes no ring of its own. */
@@ -402,7 +362,7 @@
   transition: box-shadow 120ms var(--gb-ease);
 
   &:hover {
-    box-shadow: 0 0 0 1px var(--mat-sys-outline);
+    box-shadow: 0 0 0 1.5px var(--gb-glass-selected);
   }
 
   &:focus-visible {
@@ -412,5 +372,5 @@
 }
 
 .identity--active {
-  box-shadow: 0 0 0 1px var(--mat-sys-primary);
+  box-shadow: 0 0 0 1.5px var(--mat-sys-primary);
 }

@@ -22,9 +22,7 @@
   }
 
   @if $lifted {
-    box-shadow:
-      var(--gb-glass-rim),
-      var(--gb-glass-shadow);
+    box-shadow: var(--gb-glass-rim), var(--gb-glass-shadow);
   } @else {
     box-shadow: var(--gb-glass-rim);
   }
