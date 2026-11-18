@@ -1,5 +1,4 @@
-import { randomUUID } from 'node:crypto';
-import { rmSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { INestApplication } from '@nestjs/common';
@@ -23,6 +22,11 @@ export interface TestAppOptions {
 export interface TestApp {
   readonly app: INestApplication;
   readonly db: DatabaseService;
+  /**
+   * The data directory unique to this test app. Storage and backups derive
+   * their paths from it, so they are isolated per run and removed on close.
+   */
+  readonly dataDir: string;
   readonly fixtures: TestFixtures;
   readonly getHttpServer: () => any;
   readonly request: () => request.SuperTest<request.Test>;
@@ -37,7 +41,12 @@ export interface TestApp {
 export async function createTestApp(
   options: TestAppOptions = {},
 ): Promise<TestApp> {
-  const tempDbPath = join(tmpdir(), `glassbeetle-test-${randomUUID()}.db`);
+  // Each test app gets its own data directory under the system temp directory.
+  // Using tmpdir() itself as the data directory would make everything derived
+  // from it (<dataDir>/storage, <dataDir>/backups) shared between workers and
+  // runs, and leave it behind after the suite.
+  const runDataDir = mkdtempSync(join(tmpdir(), 'glassbeetle-test-'));
+  const tempDbPath = join(runDataDir, 'test.db');
 
   // Safety assertion: test DB path must be in tmpdir and never match a real config
   if (!tempDbPath.includes(tmpdir())) {
@@ -51,7 +60,7 @@ export async function createTestApp(
     nodeEnv: 'test',
     isProduction: false,
     port: 0,
-    dataDir: tmpdir(),
+    dataDir: runDataDir,
     databasePath: tempDbPath,
     corsOrigins: ['http://localhost:4200'],
     logLevel: 'error',
@@ -83,19 +92,19 @@ export async function createTestApp(
   return {
     app,
     db,
+    dataDir: runDataDir,
     fixtures,
     getHttpServer: () => app.getHttpServer(),
     request: () => request(app.getHttpServer()),
     reset: () => resetDatabase(db),
     close: async () => {
       await app.close();
-      // Clean up the temporary database file and WAL/SHM artifacts if present
-      for (const ext of ['', '-wal', '-shm']) {
-        try {
-          rmSync(`${tempDbPath}${ext}`, { force: true });
-        } catch {
-          // Ignore removal errors on temp files
-        }
+      // Remove the run's data directory: the database (and WAL/SHM files),
+      // storage and backups all live inside it.
+      try {
+        rmSync(runDataDir, { recursive: true, force: true });
+      } catch {
+        // Ignore removal errors on temp files
       }
     },
   };

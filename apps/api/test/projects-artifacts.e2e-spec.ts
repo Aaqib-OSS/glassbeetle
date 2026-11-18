@@ -107,10 +107,21 @@ describe('Projects and Artifacts Integration Test Suite (e2e)', () => {
         path.resolve(realDataDir, 'storage'),
       );
 
+      // ...and isolated to this run: inside the harness's own data directory,
+      // never the shared <tmpdir>/storage.
+      const runDataDir = realpathSync(testApp.dataDir);
+      expect(runDataDir).not.toBe(systemTmp);
+      expect(
+        realpathSync(fileStorage.storageRoot).startsWith(runDataDir + path.sep),
+      ).toBe(true);
+
       // SQLite database file must also reside in temp dir
       const dbList = testApp.db.get<{ file: string }>('PRAGMA database_list');
       expect(dbList?.file).toBeDefined();
       expect(realpathSync(dbList!.file).startsWith(systemTmp)).toBe(true);
+      expect(realpathSync(dbList!.file).startsWith(runDataDir + path.sep)).toBe(
+        true,
+      );
     });
   });
 
