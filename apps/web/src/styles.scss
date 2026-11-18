@@ -287,7 +287,7 @@ pre,
 // pushed back further than Material's default scrim does.
 .cdk-overlay-dark-backdrop {
   background: light-dark(rgb(30 40 60 / 18%), rgb(0 0 0 / 50%));
-  backdrop-filter: blur(6px);
+  backdrop-filter: var(--gb-glass-scrim-blur, blur(6px));
 }
 
 // Menus float over the glass as glass of their own: thick enough to read,
@@ -306,6 +306,45 @@ pre,
 
 .mat-mdc-snack-bar-container .mdc-snackbar__surface {
   border-radius: var(--gb-radius-control) !important;
+}
+
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  :root {
+    --gb-backdrop: light-dark(#eef2f8, #0c0f13);
+    --gb-glass-clear: light-dark(#f4f7fb, #14181d);
+    --gb-glass-regular: light-dark(#f4f7fb, #14181d);
+    --gb-glass-thick: light-dark(#ffffff, #0e1115);
+    --gb-glass-selected: light-dark(#d8e9f3, #273e4b);
+    --gb-glass-hover: light-dark(#e8eff5, #202a33);
+    --gb-glass-ink: light-dark(#141a22, #f0f4f8);
+    --gb-glass-rim: inset 0 0 0 1px var(--mat-sys-outline);
+    --gb-glass-blur: none;
+    --gb-glass-scrim-blur: none;
+  }
+
+  html.gb-desktop,
+  html.gb-desktop body {
+    background: var(--gb-backdrop);
+  }
+}
+
+@media (forced-colors: active) {
+  :root {
+    --gb-backdrop: Canvas;
+    --gb-glass-blur: none;
+    --gb-glass-scrim-blur: none;
+    // These tokens also appear within comma-separated shadow lists.
+    --gb-glass-rim: 0 0 transparent;
+    --gb-glass-shadow: 0 0 transparent;
+    --gb-shadow-panel: 0 0 transparent;
+    --gb-shadow-raised: 0 0 transparent;
+  }
+
+  html.gb-desktop,
+  html.gb-desktop body {
+    background: Canvas;
+    box-shadow: none;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
