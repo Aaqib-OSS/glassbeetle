@@ -106,6 +106,142 @@ describe('runMigrations', () => {
   });
 });
 
+describe('chat owner migration', () => {
+  let db: Database.Database;
+  const migrationName = '007_chat_owner_set_null';
+
+  beforeEach(() => {
+    db = new Database(':memory:');
+    db.pragma('foreign_keys = ON');
+    db.exec(`
+      CREATE TABLE schema_migrations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL UNIQUE,
+        applied_at TEXT NOT NULL
+      );
+      CREATE TABLE agents (id TEXT PRIMARY KEY);
+      CREATE TABLE teams (id TEXT PRIMARY KEY);
+      CREATE TABLE projects (id TEXT PRIMARY KEY);
+      CREATE TABLE chats (
+        id               TEXT PRIMARY KEY,
+        title            TEXT,
+        project_id       TEXT REFERENCES projects(id) ON DELETE SET NULL,
+        agent_id         TEXT REFERENCES agents(id) ON DELETE SET NULL,
+        team_id          TEXT REFERENCES teams(id) ON DELETE SET NULL,
+        context_summary            TEXT,
+        compacted_before_sequence  INTEGER,
+        created_at       TEXT NOT NULL,
+        updated_at       TEXT NOT NULL,
+        CHECK (
+          (agent_id IS NOT NULL AND team_id IS NULL)
+          OR (agent_id IS NULL AND team_id IS NOT NULL)
+        )
+      );
+      CREATE TABLE messages (
+        id      TEXT PRIMARY KEY,
+        chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE
+      );
+      CREATE TABLE artifacts (
+        id      TEXT PRIMARY KEY,
+        chat_id TEXT REFERENCES chats(id) ON DELETE SET NULL
+      );
+      CREATE TABLE usage_events (
+        id      TEXT PRIMARY KEY,
+        chat_id TEXT REFERENCES chats(id) ON DELETE SET NULL
+      );
+      CREATE INDEX idx_chats_project_id ON chats(project_id);
+      CREATE INDEX idx_chats_agent_id ON chats(agent_id);
+      CREATE INDEX idx_chats_team_id ON chats(team_id);
+    `);
+
+    const recordMigration = db.prepare(
+      'INSERT INTO schema_migrations (name, applied_at) VALUES (?, ?)',
+    );
+    recordMigration.run(INITIAL_MIGRATION_NAME, '2026-01-01T00:00:00.000Z');
+    for (const migration of MIGRATIONS_AFTER_BOOTSTRAP) {
+      if (migration.name !== migrationName) {
+        recordMigration.run(migration.name, '2026-01-01T00:00:00.000Z');
+      }
+    }
+
+    db.exec(`
+      INSERT INTO agents (id) VALUES ('agent-1');
+      INSERT INTO teams (id) VALUES ('team-1');
+      INSERT INTO chats (id, title, agent_id, team_id, created_at, updated_at)
+      VALUES ('agent-chat', 'Agent chat', 'agent-1', NULL, '2026-01-01', '2026-01-01'),
+             ('team-chat', 'Team chat', NULL, 'team-1', '2026-01-01', '2026-01-01');
+      INSERT INTO messages (id, chat_id) VALUES ('message-1', 'agent-chat'), ('message-2', 'team-chat');
+      INSERT INTO artifacts (id, chat_id) VALUES ('artifact-1', 'agent-chat');
+      INSERT INTO usage_events (id, chat_id) VALUES ('event-1', 'team-chat');
+    `);
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  it('keeps chats and their children while allowing both owner columns to become null', () => {
+    runMigrations(db);
+
+    db.prepare('DELETE FROM agents WHERE id = ?').run('agent-1');
+    db.prepare('DELETE FROM teams WHERE id = ?').run('team-1');
+
+    const chats = db
+      .prepare('SELECT id, agent_id, team_id FROM chats ORDER BY id')
+      .all() as {
+      id: string;
+      agent_id: string | null;
+      team_id: string | null;
+    }[];
+    expect(chats).toEqual([
+      { id: 'agent-chat', agent_id: null, team_id: null },
+      { id: 'team-chat', agent_id: null, team_id: null },
+    ]);
+
+    expect(db.prepare('SELECT id FROM messages ORDER BY id').all()).toEqual([
+      { id: 'message-1' },
+      { id: 'message-2' },
+    ]);
+    expect(db.prepare('SELECT id, chat_id FROM artifacts').all()).toEqual([
+      { id: 'artifact-1', chat_id: 'agent-chat' },
+    ]);
+    expect(db.prepare('SELECT id, chat_id FROM usage_events').all()).toEqual([
+      { id: 'event-1', chat_id: 'team-chat' },
+    ]);
+
+    const indexes = (
+      db
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'chats'",
+        )
+        .all() as { name: string }[]
+    ).map((row) => row.name);
+    expect(indexes).toEqual(
+      expect.arrayContaining([
+        'idx_chats_project_id',
+        'idx_chats_agent_id',
+        'idx_chats_team_id',
+      ]),
+    );
+  });
+
+  it('still refuses a chat that belongs to both an agent and a team', () => {
+    runMigrations(db);
+
+    db.exec(`
+      INSERT INTO agents (id) VALUES ('agent-2');
+      INSERT INTO teams (id) VALUES ('team-2');
+    `);
+
+    expect(() => {
+      db.prepare(
+        `INSERT INTO chats (id, title, agent_id, team_id, created_at, updated_at)
+         VALUES ('both-chat', 'Both owners', 'agent-2', 'team-2', '2026-01-01', '2026-01-01')`,
+      ).run();
+    }).toThrow(/CHECK/i);
+  });
+});
+
 describe('user_profile schema', () => {
   let db: Database.Database;
 

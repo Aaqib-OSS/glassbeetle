@@ -1150,28 +1150,20 @@ describe('AgentsService', () => {
       }
     });
 
-    it('documents agent-owned chat behavior: deleting agent fails due to chats table CHECK constraint conflict', async () => {
+    it('deletes an agent that owns a chat and clears the chat owner reference', async () => {
       const agent = fixtures.createAgent({ name: 'Chat Owner Agent' });
       const chat = fixtures.createChat({ agent_id: agent.id });
 
-      // When SQLite executes ON DELETE SET NULL on chats.agent_id,
-      // chats.agent_id becomes NULL while chats.team_id is already NULL.
-      // This violates the CHECK constraint in data/chats/chats.sql:
-      // CHECK ((agent_id IS NOT NULL AND team_id IS NULL) OR (agent_id IS NULL AND team_id IS NOT NULL))
-      await expect(service.delete(agent.id)).rejects.toThrowError(
-        /CHECK constraint failed/,
-      );
+      await expect(service.delete(agent.id)).resolves.toBeUndefined();
 
-      // Assert agent was not deleted due to statement rollback
-      const agentStillExists = await service.findById(agent.id);
-      expect(agentStillExists).not.toBeNull();
+      expect(await service.findById(agent.id)).toBeNull();
 
-      // Assert chat still exists untouched
-      const chatRow = db.get<{ agent_id: string }>(
+      const chatRow = db.get<{ agent_id: string | null }>(
         'SELECT agent_id FROM chats WHERE id = ?',
         [chat.id],
       );
-      expect(chatRow?.agent_id).toBe(agent.id);
+      expect(chatRow).toBeDefined();
+      expect(chatRow?.agent_id).toBeNull();
     });
   });
 

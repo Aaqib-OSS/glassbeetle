@@ -287,7 +287,7 @@ export class AgentsController {
 Cascade behavior across referencing tables:
 - \`agent_memories\` (agent_id NOT NULL): CASCADE — the agent's private memories are destroyed.
 - \`team_members\` (agent_id NOT NULL): CASCADE — team memberships are removed.
-- \`chats\` (agent_id nullable): SET NULL — chats survive, orphaned (Note: deleting an agent with agent-owned chats violates the chats CHECK constraint; see issue #29).
+- \`chats\` (agent_id nullable): SET NULL — chats survive with no owner.
 - \`messages\` (agent_id nullable): SET NULL — messages survive, attribution lost.
 - \`artifacts\` (agent_id nullable): SET NULL — artifacts survive, attribution lost.
 - \`usage_events\` (agent_id nullable): SET NULL — analytics history survives, attribution lost.`,
