@@ -406,9 +406,8 @@ export class AgentsService {
    * - `messages`: SET NULL — messages survive, attribution lost.
    * - `artifacts`: SET NULL — artifacts survive, attribution lost.
    * - `usage_events`: SET NULL — analytics history survives, attribution lost.
-   * - `chats`: ON DELETE SET NULL on `chats.agent_id` violates the `chats` table CHECK constraint
-   *   requiring either `agent_id` or `team_id` to be non-null. Therefore, deleting an agent
-   *   with agent-owned chats fails with SQLITE_CONSTRAINT_CHECK.
+   * - `chats`: SET NULL — chats survive with no owner, since deleting the owner
+   *   clears `agent_id` while `team_id` is already null.
    *
    * If a picture file exists on disk, it is unlinked after the database row is deleted.
    * Missing files or unlinking errors are logged as warnings and do not fail the request.

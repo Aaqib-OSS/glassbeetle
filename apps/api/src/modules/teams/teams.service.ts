@@ -153,6 +153,7 @@ export class TeamsService {
    *
    * `team_members` cascades, so the roster goes with it; the agents themselves
    * are untouched, since membership is a relationship rather than ownership.
+   * Chats owned by the team survive with their `team_id` cleared.
    */
   async delete(teamId: string): Promise<void> {
     this.assertExists(teamId);

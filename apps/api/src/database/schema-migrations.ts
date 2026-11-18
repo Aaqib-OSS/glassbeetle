@@ -175,6 +175,7 @@ const FALLBACK_SQL: Record<string, string> = {
     CHECK (
         (agent_id IS NOT NULL AND team_id IS NULL)
         OR (agent_id IS NULL AND team_id IS NOT NULL)
+        OR (agent_id IS NULL AND team_id IS NULL)
     )
 );`,
   'chats/messages.sql': `CREATE TABLE messages (
@@ -366,6 +367,12 @@ export interface IncrementalMigration {
   readonly name: string;
   /** DDL applied inside a single transaction. */
   readonly sql: string;
+  /**
+   * Run with foreign-key enforcement disabled, for a migration that rebuilds a
+   * table other tables reference. Dropping the old table would otherwise fire
+   * their `ON DELETE` actions and destroy or detach real rows.
+   */
+  readonly withoutForeignKeys?: boolean;
 }
 
 /**
@@ -441,6 +448,33 @@ ALTER TABLE team_members ADD COLUMN is_coordinator INTEGER NOT NULL DEFAULT 0;`,
 );
 CREATE INDEX IF NOT EXISTS idx_artifact_versions_artifact_id ON artifact_versions(artifact_id, version DESC);`,
   },
+  {
+    name: '007_chat_owner_set_null',
+    withoutForeignKeys: true,
+    sql: `CREATE TABLE chats_new (
+    id               TEXT PRIMARY KEY,
+    title            TEXT,
+    project_id       TEXT REFERENCES projects(id) ON DELETE SET NULL,
+    agent_id         TEXT REFERENCES agents(id) ON DELETE SET NULL,
+    team_id          TEXT REFERENCES teams(id) ON DELETE SET NULL,
+    context_summary            TEXT,
+    compacted_before_sequence  INTEGER,
+    created_at       TEXT NOT NULL,
+    updated_at       TEXT NOT NULL,
+    CHECK (
+        (agent_id IS NOT NULL AND team_id IS NULL)
+        OR (agent_id IS NULL AND team_id IS NOT NULL)
+        OR (agent_id IS NULL AND team_id IS NULL)
+    )
+);
+INSERT INTO chats_new (id, title, project_id, agent_id, team_id, context_summary, compacted_before_sequence, created_at, updated_at)
+SELECT id, title, project_id, agent_id, team_id, context_summary, compacted_before_sequence, created_at, updated_at FROM chats;
+DROP TABLE chats;
+ALTER TABLE chats_new RENAME TO chats;
+CREATE INDEX IF NOT EXISTS idx_chats_project_id ON chats(project_id);
+CREATE INDEX IF NOT EXISTS idx_chats_agent_id ON chats(agent_id);
+CREATE INDEX IF NOT EXISTS idx_chats_team_id ON chats(team_id);`,
+  },
 ];
 
 /**
@@ -503,28 +537,52 @@ function applyIncrementalMigrations(db: Database.Database): void {
       continue;
     }
 
-    const apply = db.transaction(() => {
-      for (const statement of migration.sql.split(';')) {
-        const trimmed = statement.trim();
-        if (!trimmed) continue;
-        try {
-          db.exec(trimmed);
-        } catch (err: unknown) {
-          const message = err instanceof Error ? err.message : String(err);
-          if (
-            !message.includes('duplicate column name') &&
-            !message.includes('no such table')
-          ) {
-            throw err;
+    const foreignKeysWereEnabled =
+      migration.withoutForeignKeys === true &&
+      (db.pragma('foreign_keys', { simple: true }) as number) === 1;
+
+    if (foreignKeysWereEnabled) {
+      db.pragma('foreign_keys = OFF');
+    }
+
+    try {
+      const apply = db.transaction(() => {
+        for (const statement of migration.sql.split(';')) {
+          const trimmed = statement.trim();
+          if (!trimmed) continue;
+          try {
+            db.exec(trimmed);
+          } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            if (
+              !message.includes('duplicate column name') &&
+              !message.includes('no such table')
+            ) {
+              throw err;
+            }
           }
         }
-      }
-      db.prepare(
-        'INSERT INTO schema_migrations (name, applied_at) VALUES (?, ?)',
-      ).run(migration.name, new Date().toISOString());
-    });
 
-    apply();
+        if (migration.withoutForeignKeys) {
+          const violations = db.pragma('foreign_key_check') as unknown[];
+          if (violations.length > 0) {
+            throw new Error(
+              `Migration "${migration.name}" left ${violations.length} foreign key violation(s)`,
+            );
+          }
+        }
+
+        db.prepare(
+          'INSERT INTO schema_migrations (name, applied_at) VALUES (?, ?)',
+        ).run(migration.name, new Date().toISOString());
+      });
+
+      apply();
+    } finally {
+      if (foreignKeysWereEnabled) {
+        db.pragma('foreign_keys = ON');
+      }
+    }
   }
 }
 

@@ -620,34 +620,35 @@ describe('Chats endpoints (e2e)', () => {
     });
   });
 
-  describe('Owner constraint versus cascade tension (CHECK vs ON DELETE SET NULL)', () => {
-    it('demonstrates that deleting an owner fails SQLite CHECK constraint when a chat exists', async () => {
+  describe('Owner deletion (ON DELETE SET NULL)', () => {
+    it('deletes an owning agent and clears the chat owner reference', async () => {
       const agent = createAgent('Owner Agent');
       const chat = await createChat({ agentId: agent.id, title: 'Dependent Chat' });
 
-      // Direct SQL attempt to delete the owning agent when foreign keys are enforced.
-      // Foreign key ON DELETE SET NULL attempts to update chats SET agent_id = NULL.
-      // But chats has CHECK ((agent_id IS NOT NULL AND team_id IS NULL) OR (agent_id IS NULL AND team_id IS NOT NULL)).
-      // SQLite evaluates CHECK on the updated row and rejects the deletion with a constraint violation.
-      expect(() => {
-        testApp.db.run('DELETE FROM agents WHERE id = ?', [agent.id]);
-      }).toThrow(/CHECK constraint failed/);
+      testApp.db.run('DELETE FROM agents WHERE id = ?', [agent.id]);
 
-      // Verify the agent and chat both remain intact in the database
-      expect(testApp.db.get('SELECT id FROM agents WHERE id = ?', [agent.id])).toBeDefined();
-      expect(testApp.db.get('SELECT id FROM chats WHERE id = ?', [chat.id])).toBeDefined();
+      expect(testApp.db.get('SELECT id FROM agents WHERE id = ?', [agent.id])).toBeUndefined();
+      const chatRow = testApp.db.get<{ agent_id: string | null }>(
+        'SELECT agent_id FROM chats WHERE id = ?',
+        [chat.id],
+      );
+      expect(chatRow).toBeDefined();
+      expect(chatRow?.agent_id).toBeNull();
     });
 
-    it('demonstrates that deleting an owning team also fails SQLite CHECK constraint when a chat exists', async () => {
+    it('deletes an owning team and clears the chat owner reference', async () => {
       const team = createTeam('Owner Team');
       const chat = await createChat({ teamId: team.id, title: 'Team Dependent Chat' });
 
-      expect(() => {
-        testApp.db.run('DELETE FROM teams WHERE id = ?', [team.id]);
-      }).toThrow(/CHECK constraint failed/);
+      testApp.db.run('DELETE FROM teams WHERE id = ?', [team.id]);
 
-      expect(testApp.db.get('SELECT id FROM teams WHERE id = ?', [team.id])).toBeDefined();
-      expect(testApp.db.get('SELECT id FROM chats WHERE id = ?', [chat.id])).toBeDefined();
+      expect(testApp.db.get('SELECT id FROM teams WHERE id = ?', [team.id])).toBeUndefined();
+      const chatRow = testApp.db.get<{ team_id: string | null }>(
+        'SELECT team_id FROM chats WHERE id = ?',
+        [chat.id],
+      );
+      expect(chatRow).toBeDefined();
+      expect(chatRow?.team_id).toBeNull();
     });
 
     it('defensively handles orphaned chats (both agent_id and team_id null) on list and get without crashing', async () => {

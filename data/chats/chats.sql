@@ -11,5 +11,6 @@ CREATE TABLE chats (
     CHECK (
         (agent_id IS NOT NULL AND team_id IS NULL)
         OR (agent_id IS NULL AND team_id IS NOT NULL)
+        OR (agent_id IS NULL AND team_id IS NULL)
     )
 );

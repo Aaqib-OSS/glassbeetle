@@ -443,6 +443,37 @@ describe('Teams endpoints (e2e)', () => {
   });
 
   describe('deleting a team', () => {
+    it('deletes a team that owns a chat, leaving the chat without an owner', async () => {
+      const team = await createTeam({ name: 'Chat Owner Team' });
+      const chatRes = await testApp
+        .request()
+        .post('/api/v1/chats')
+        .send({ teamId: team.id, title: 'Surviving Team Chat' })
+        .expect(201);
+      const chat = chatRes.body;
+
+      await testApp.request().delete(`/api/v1/teams/${team.id}`).expect(204);
+
+      await testApp.request().get(`/api/v1/teams/${team.id}`).expect(404);
+
+      const chatResAfter = await testApp
+        .request()
+        .get(`/api/v1/chats/${chat.id}`)
+        .expect(200);
+      expect(chatResAfter.body).toMatchObject({
+        id: chat.id,
+        title: 'Surviving Team Chat',
+        agentId: null,
+        teamId: null,
+      });
+
+      const row = testApp.db.get<{ team_id: string | null }>(
+        'SELECT team_id FROM chats WHERE id = ?',
+        [chat.id],
+      );
+      expect(row?.team_id).toBeNull();
+    });
+
     it('takes the roster with it and leaves the agents alone', async () => {
       const team = await createTeam();
       const agent = createAgent('One');

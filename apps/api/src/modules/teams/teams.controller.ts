@@ -222,7 +222,7 @@ The roster starts empty; agents are put on it with \`POST /teams/:teamId/members
 
 Cascade behaviour:
 - \`team_members\` (team_id NOT NULL): CASCADE — the roster is destroyed. The agents themselves are untouched; membership is a relationship, not ownership.
-- \`chats\` (team_id nullable): SET NULL — chats survive, unbound. Note that \`chats\` has a CHECK requiring exactly one of \`agent_id\` and \`team_id\`, so deleting a team that owns chats violates it; this is the same gap as deleting an agent with chats (issue #29) and there is no chats endpoint yet to reach that state through.`,
+- \`chats\` (team_id nullable): SET NULL — chats survive with no owner.`,
   })
   @ApiParam({ name: 'teamId', description: 'Unique team identifier' })
   @ApiNoContentResponse({ description: 'Team successfully deleted' })

@@ -1101,24 +1101,69 @@ describe('Agents endpoints (e2e)', () => {
       expect(await fileStorage.exists(stored.reference)).toBe(false);
     });
 
-    it('documents agent-owned chat behavior: deleting agent fails due to chats table CHECK constraint conflict', async () => {
-      const agent = testApp.fixtures.createAgent({ name: 'Chat Owner Agent' });
-      testApp.fixtures.createChat({ agent_id: agent.id });
+    it('deletes an agent that owns a chat, leaving the chat without an owner', async () => {
+      const agentRes = await testApp
+        .request()
+        .post('/api/v1/agents')
+        .send({ name: 'Chat Owner Agent' })
+        .expect(201);
+      const agent = agentRes.body;
 
-      // When deleting an agent owning chats, SQLite triggers ON DELETE SET NULL on chats.agent_id,
-      // which results in both agent_id and team_id being NULL, violating:
-      // CHECK ((agent_id IS NOT NULL AND team_id IS NULL) OR (agent_id IS NULL AND team_id IS NOT NULL))
+      const chatRes = await testApp
+        .request()
+        .post('/api/v1/chats')
+        .send({ agentId: agent.id, title: 'Surviving Chat' })
+        .expect(201);
+      const chat = chatRes.body;
+
       await testApp
         .request()
         .delete(`/api/v1/agents/${agent.id}`)
-        .expect(500);
+        .expect(204);
 
-      // Assert agent is still present in database
-      const getRes = await testApp
+      await testApp
         .request()
         .get(`/api/v1/agents/${agent.id}`)
+        .expect(404);
+
+      const chatResAfter = await testApp
+        .request()
+        .get(`/api/v1/chats/${chat.id}`)
         .expect(200);
-      expect(getRes.body.id).toBe(agent.id);
+      expect(chatResAfter.body).toMatchObject({
+        id: chat.id,
+        title: 'Surviving Chat',
+        agentId: null,
+        teamId: null,
+      });
+
+      const row = testApp.db.get<{ agent_id: string | null }>(
+        'SELECT agent_id FROM chats WHERE id = ?',
+        [chat.id],
+      );
+      expect(row?.agent_id).toBeNull();
+    });
+
+    it('deletes an agent that owns chats and clears the chat owner reference', async () => {
+      const agent = testApp.fixtures.createAgent({ name: 'Chat Owner Agent' });
+      const chat = testApp.fixtures.createChat({ agent_id: agent.id });
+
+      await testApp
+        .request()
+        .delete(`/api/v1/agents/${agent.id}`)
+        .expect(204);
+
+      await testApp
+        .request()
+        .get(`/api/v1/agents/${agent.id}`)
+        .expect(404);
+
+      const chatRow = testApp.db.get<{ agent_id: string | null }>(
+        'SELECT agent_id FROM chats WHERE id = ?',
+        [chat.id],
+      );
+      expect(chatRow).toBeDefined();
+      expect(chatRow?.agent_id).toBeNull();
     });
   });
 
