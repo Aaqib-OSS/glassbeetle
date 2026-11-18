@@ -112,11 +112,12 @@ The window chrome is the app's, not the operating system's. Everything along
 the top is one component — the deck — and each control on it earns its place by
 showing something the screen below cannot.
 
-**The workspace control** (the mark and the name) opens a panel, not a menu. A
-menu is a list of commands; this answers *what am I connected to, what is in
-it, is it healthy* with live values, and offers the few actions that belong to
-the workspace rather than to a screen. The backend's state rides on the mark
-itself as a single dot, so a degraded API is noticed without a second widget.
+**The workspace control** (the settings gear) sits in the foot of the rail, 
+not on the deck. It opens a panel, not a menu. A menu is a list of commands; 
+this answers what am I connected to, what is in it, is it healthy with live values, 
+and offers the few actions that belong to the workspace rather than to a screen. 
+The backend's state shows on the gear as a single dot on its corner, 
+so a degraded API is noticed without a second widget.
 
 **The fleet gauge** is the agents, in the chrome. The rail lists them too, but
 the rail collapses and the chrome never does — so this is what remains on a
@@ -125,16 +126,10 @@ surfaces only the agents that are not, as overlapping avatars that lead
 straight to them. It is derived from the roster the rail already loaded, so it
 costs no request.
 
-**The trail** is where you are, in the workspace's own words — an agent's
-entry shows its name, resolved from that same roster. That is what a title bar
-is for, and it is why the bar no longer carries a window title.
-
-**The spine** is the deck's bottom edge: a two-pixel line, split
-proportionally by agent readiness, in the space a border would have taken
-anyway. It costs no height and adds no control, but it means the chrome is
-never merely decorative — at a glance, on every screen, it says how much of the
-fleet is configured. An unreachable API overrides it, because nothing it could
-report would be trustworthy while the backend is silent.
+**The spine** is the sheet's top edge: a two-pixel line, split proportionally by agent 
+readiness. It costs no height and adds no control. It means the sheet itself reports 
+how much of the fleet is configured, on every screen. An unreachable API overrides it, 
+because nothing it could report would be trustworthy while the backend is silent.
 
 ## Window chrome
 
@@ -155,7 +150,17 @@ denied silently and the window cannot be moved at all. The same applies to
 **Resizing is the app's job off macOS.** An undecorated window on macOS still
 resizes from its borders; on Windows and Linux that border belonged to the
 frame that is no longer there, so the shell renders invisible edge strips that
-call `startResizeDragging`. `DesktopService.needsResizeEdges` decides.
+call `startResizeDragging`. `DesktopService.needsResizeEdges` decides. 
+
+The window is transparent (`transparent: true`, with `macOSPrivateApi: true`) and carries 
+`windowEffects` (`liquidGlassRegular`, `hudWindow`, `acrylic`) with `state: 
+followsWindowActiveState`, so the OS glass shows through the chrome. It has no OS shadow
+(`shadow: false`), because a transparent window's shadow would trace the old rectangle; 
+the edge is a lit rim drawn in CSS instead. The glass view ignores the corner radius 
+it is given, so `apps/desktop/src-tauri/src/corners.rs` reaches into AppKit to round and clip 
+the window's own views. The radius is pinned at 32 in three places: `WINDOW_RADIUS` 
+in `corners.rs`, `--gb-radius-window` in `styles.scss`, and `windowEffects.radius` 
+in `tauri.conf.json`. Change all three together.
 
 ## The native menu
 
