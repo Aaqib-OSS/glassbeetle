@@ -89,8 +89,8 @@ html {
   // lets the desktop or the backdrop show through, while the routed surface is
   // a thicker sheet laid on it, so what you read never sits on noise.
   --gb-glass-blur: blur(28px) saturate(180%);
-  --gb-glass-clear: light-dark(rgb(255 255 255 / 20%), rgb(255 255 255 / 4%));
-  --gb-glass-regular: light-dark(rgb(255 255 255 / 48%), rgb(255 255 255 / 7%));
+  --gb-glass-clear: light-dark(rgb(255 255 255 / 28%), rgb(12 15 19 / 24%));
+  --gb-glass-regular: light-dark(rgb(255 255 255 / 48%), rgb(12 15 19 / 30%));
   --gb-glass-thick: light-dark(rgb(247 249 252 / 70%), rgb(22 26 31 / 72%));
   --gb-glass-selected: light-dark(rgb(255 255 255 / 86%), rgb(255 255 255 / 12%));
   --gb-glass-hover: light-dark(rgb(255 255 255 / 48%), rgb(255 255 255 / 7%));
