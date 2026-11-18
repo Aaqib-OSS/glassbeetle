@@ -184,6 +184,14 @@ workspace. Rust also reveals it unconditionally after four seconds: a window
 that waits on the frontend is only as reliable as the frontend, and a window
 showing an error beats no window at all.
 
+## System accessibility settings
+
+When the browser reports reduced transparency or increased contrast, the chrome
+and the desktop backdrop use opaque colors and the glass blur is off.
+Forced-colors mode also removes decorative shadows and rims so the system
+palette can draw the surfaces. These preferences take effect while the page is
+open. The native Tauri window still uses the transparency configured at startup.
+
 ## Layout
 
 ```
