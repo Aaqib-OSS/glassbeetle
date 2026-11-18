@@ -177,6 +177,15 @@
       "contributions": [
         "code"
       ]
+    },
+    {
+      "login": "celes26protein-lab",
+      "name": "Celeste Protein laboratory",
+      "avatar_url": "https://avatars.githubusercontent.com/u/275288138?v=4",
+      "profile": "https://md-stats-auditor-celes.streamlit.app/",
+      "contributions": [
+        "doc"
+      ]
     }
   ],
   "commitType": "docs",
