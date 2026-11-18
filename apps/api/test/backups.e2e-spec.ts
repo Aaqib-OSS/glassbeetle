@@ -1,5 +1,4 @@
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import * as tar from 'tar';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
@@ -61,7 +60,7 @@ describe('Backups endpoints (e2e)', () => {
       expect(row?.file_path).toBe(`backup-${response.body.id}.tar.gz`);
       expect(row!.file_path).not.toMatch(/[\\/]/);
 
-      const archivePath = path.join(os.tmpdir(), 'backups', row!.file_path);
+      const archivePath = path.join(testApp.dataDir, 'backups', row!.file_path);
       expect(fs.existsSync(archivePath)).toBe(true);
 
       // Verify archive contains manifest, database and files
@@ -138,7 +137,7 @@ describe('Backups endpoints (e2e)', () => {
     });
 
     it('returns backups sorted newest first by default, with pagination and trigger filter', async () => {
-      const tempArchive = path.join(os.tmpdir(), 'backups', 'dummy.tar.gz');
+      const tempArchive = path.join(testApp.dataDir, 'backups', 'dummy.tar.gz');
       fs.mkdirSync(path.dirname(tempArchive), { recursive: true });
       fs.writeFileSync(tempArchive, 'dummy bytes');
 
@@ -245,7 +244,7 @@ describe('Backups endpoints (e2e)', () => {
       );
 
       // Unlink archive file externally
-      fs.unlinkSync(path.join(os.tmpdir(), 'backups', row!.file_path));
+      fs.unlinkSync(path.join(testApp.dataDir, 'backups', row!.file_path));
 
       const retrieveRes = await testApp
         .request()
@@ -283,7 +282,7 @@ describe('Backups endpoints (e2e)', () => {
         'SELECT file_path FROM backups WHERE id = ?',
         [createRes.body.id],
       );
-      const archivePath = path.join(os.tmpdir(), 'backups', row!.file_path);
+      const archivePath = path.join(testApp.dataDir, 'backups', row!.file_path);
       expect(fs.existsSync(archivePath)).toBe(true);
 
       await testApp
@@ -313,7 +312,7 @@ describe('Backups endpoints (e2e)', () => {
       );
 
       // Manually remove file first
-      const archivePath = path.join(os.tmpdir(), 'backups', row!.file_path);
+      const archivePath = path.join(testApp.dataDir, 'backups', row!.file_path);
       fs.unlinkSync(archivePath);
       expect(fs.existsSync(archivePath)).toBe(false);
 
