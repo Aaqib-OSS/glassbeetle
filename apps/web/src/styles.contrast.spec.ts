@@ -20,6 +20,8 @@ const FILLS = [
   { name: 'clear', token: 'gb-glass-clear' },
   { name: 'regular', token: 'gb-glass-regular' },
   { name: 'thick', token: 'gb-glass-thick' },
+  { name: 'selected', token: 'gb-glass-selected' },
+  { name: 'hover', token: 'gb-glass-hover' },
 ] as const;
 const DESKTOPS = [
   { name: 'black', rgb: [0, 0, 0] as Rgb },
@@ -126,6 +128,19 @@ describe('Glass text contrast', () => {
       }
     }
   }
+
+  it('keeps dark selected, hover and regular rows visibly different from each other', () => {
+    // A dark fill over a black desktop is black whatever its alpha, so only the
+    // lighter desktops can tell the states apart by fill; the rim covers black.
+    for (const desktop of DESKTOPS.filter((candidate) => candidate.name !== 'black')) {
+      const backgrounds = ['regular', 'hover', 'selected'].map(
+        (fill) => composite('dark', fill, desktop.rgb).background,
+      );
+
+      expect(contrast(backgrounds[0], backgrounds[1])).toBeGreaterThanOrEqual(1.05);
+      expect(contrast(backgrounds[1], backgrounds[2])).toBeGreaterThanOrEqual(1.05);
+    }
+  });
 
   it('keeps the thick sheet at its current contrast', () => {
     expect(ratio('dark', 'thick', [255, 255, 255])).toBeCloseTo(9.02, 2);
