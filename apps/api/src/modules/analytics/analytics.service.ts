@@ -145,8 +145,37 @@ function parseOffsetToMs(offset: string): number {
   return sign * (hours * 3600 + minutes * 60) * 1000;
 }
 
+const FIXED_OFFSET_PATTERN = /^([+-])(\d{2}):(\d{2})$/;
+
+const zoneOffsetFormatters = new Map<string, Intl.DateTimeFormat>();
+
+/**
+ * The UTC offset (`+HH:MM`) `timeZone` has at `instant`.
+ */
+function zoneOffsetAt(timeZone: string, instant: Date): string {
+  let formatter = zoneOffsetFormatters.get(timeZone);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      timeZoneName: 'longOffset',
+    });
+    zoneOffsetFormatters.set(timeZone, formatter);
+  }
+  const tzPart = formatter
+    .formatToParts(instant)
+    .find((p) => p.type === 'timeZoneName')?.value;
+  if (!tzPart || tzPart === 'GMT') {
+    return '+00:00';
+  }
+  return tzPart.replace('GMT', '');
+}
+
 /**
  * Resolves a timezone string into a canonical timeZone name and SQLite offset modifier (`+HH:MM`).
+ *
+ * For an IANA zone the modifier is the offset in force at `referenceDate`; use
+ * {@link resolveOffsetSegments} to bucket a whole range, because a zone that
+ * observes daylight saving has more than one offset.
  */
 function resolveTimezone(
   timeZoneInput?: string | null,
@@ -159,7 +188,7 @@ function resolveTimezone(
     return { timeZoneName: 'UTC', offsetModifier: '+00:00' };
   }
 
-  const offsetMatch = /^([+-])(\d{2}):(\d{2})$/.exec(rawTz);
+  const offsetMatch = FIXED_OFFSET_PATTERN.exec(rawTz);
   if (offsetMatch) {
     const hours = parseInt(offsetMatch[2], 10);
     const minutes = parseInt(offsetMatch[3], 10);
@@ -172,22 +201,104 @@ function resolveTimezone(
   }
 
   try {
-    const formatter = new Intl.DateTimeFormat('en-US', {
-      timeZone: rawTz,
-      timeZoneName: 'longOffset',
-    });
-    const parts = formatter.formatToParts(referenceDate);
-    const tzPart = parts.find((p) => p.type === 'timeZoneName')?.value;
-    if (!tzPart || tzPart === 'GMT') {
-      return { timeZoneName: rawTz, offsetModifier: '+00:00' };
-    }
-    const offset = tzPart.replace('GMT', '');
-    return { timeZoneName: rawTz, offsetModifier: offset };
+    return {
+      timeZoneName: rawTz,
+      offsetModifier: zoneOffsetAt(rawTz, referenceDate),
+    };
   } catch {
     throw new BadRequestException(
       `Invalid timezone: "${rawTz}". Must be "UTC", a valid IANA timezone name, or an offset such as "+02:00" or "-05:00".`,
     );
   }
+}
+
+/**
+ * A stretch of a requested range during which a timezone keeps one UTC offset.
+ */
+interface OffsetSegment {
+  /** First instant (epoch ms) the offset applies to. */
+  startMs: number;
+  /** SQLite date modifier (`+HH:MM`) in force from `startMs`. */
+  offsetModifier: string;
+}
+
+/** Offsets change at most once a day, so a daily scan cannot miss one. */
+const OFFSET_SCAN_STEP_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Splits `[fromDate, toDate]` into stretches that each have a single UTC offset
+ * in `timeZoneName`, so an event can be bucketed with the offset that applied at
+ * its own instant rather than the one in force when the request was served.
+ *
+ * `UTC` and explicit `+HH:MM` inputs have no daylight saving and stay a single
+ * segment carrying `fixedOffset`.
+ */
+function resolveOffsetSegments(
+  timeZoneName: string,
+  fixedOffset: string,
+  fromDate: Date,
+  toDate: Date,
+): OffsetSegment[] {
+  const startMs = fromDate.getTime();
+  const endMs = toDate.getTime();
+
+  if (timeZoneName === 'UTC' || FIXED_OFFSET_PATTERN.test(timeZoneName)) {
+    return [{ startMs, offsetModifier: fixedOffset }];
+  }
+
+  const segments: OffsetSegment[] = [
+    { startMs, offsetModifier: zoneOffsetAt(timeZoneName, fromDate) },
+  ];
+  let previousMs = startMs;
+  let previousOffset = segments[0].offsetModifier;
+
+  while (previousMs < endMs) {
+    const probeMs = Math.min(previousMs + OFFSET_SCAN_STEP_MS, endMs);
+    const probeOffset = zoneOffsetAt(timeZoneName, new Date(probeMs));
+    if (probeOffset !== previousOffset) {
+      // Bisect for the first millisecond the new offset applies to.
+      let low = previousMs;
+      let high = probeMs;
+      while (high - low > 1) {
+        const mid = Math.floor((low + high) / 2);
+        if (zoneOffsetAt(timeZoneName, new Date(mid)) === previousOffset) {
+          low = mid;
+        } else {
+          high = mid;
+        }
+      }
+      segments.push({ startMs: high, offsetModifier: probeOffset });
+      previousOffset = probeOffset;
+    }
+    previousMs = probeMs;
+  }
+
+  return segments;
+}
+
+/**
+ * Builds the SQL expression for the `strftime` offset modifier, choosing the
+ * offset by each row's own `occurred_at` when the range crosses a transition.
+ */
+function offsetModifierSql(segments: OffsetSegment[]): {
+  sql: string;
+  params: string[];
+} {
+  if (segments.length === 1) {
+    return { sql: '?', params: [segments[0].offsetModifier] };
+  }
+
+  const whens: string[] = [];
+  const params: string[] = [];
+  for (let i = 0; i < segments.length - 1; i++) {
+    whens.push('WHEN occurred_at < ? THEN ?');
+    params.push(
+      toIso(new Date(segments[i + 1].startMs)),
+      segments[i].offsetModifier,
+    );
+  }
+  params.push(segments[segments.length - 1].offsetModifier);
+  return { sql: `CASE ${whens.join(' ')} ELSE ? END`, params };
 }
 
 /**
@@ -231,7 +342,7 @@ function countTimeBuckets(
  * Generates an ordered array of time bucket keys across `[fromDate, toDate]`
  * taking into account the civil time shift from `offsetModifier`.
  */
-function generateTimeBuckets(
+function generateTimeBucketsForOffset(
   bucketType: TimeBucketDimension | ActivityInterval,
   fromDate: Date,
   toDate: Date,
@@ -341,6 +452,36 @@ function generateTimeBuckets(
 }
 
 /**
+ * Generates the bucket keys across `[fromDate, toDate]`, applying each offset
+ * segment to its own stretch of the range so the keys match what the SQL
+ * bucketing produces on both sides of a daylight-saving transition.
+ */
+function generateTimeBuckets(
+  bucketType: TimeBucketDimension | ActivityInterval,
+  fromDate: Date,
+  toDate: Date,
+  segments: OffsetSegment[],
+): string[] {
+  const buckets = new Set<string>();
+  segments.forEach((segment, index) => {
+    const next = segments[index + 1];
+    const segmentFrom = new Date(Math.max(fromDate.getTime(), segment.startMs));
+    const segmentTo = new Date(
+      next ? Math.min(toDate.getTime(), next.startMs - 1) : toDate.getTime(),
+    );
+    for (const bucket of generateTimeBucketsForOffset(
+      bucketType,
+      segmentFrom,
+      segmentTo,
+      segment.offsetModifier,
+    )) {
+      buckets.add(bucket);
+    }
+  });
+  return Array.from(buckets);
+}
+
+/**
  * Service providing analytics persistence and SQL aggregations over `usage_events`.
  */
 @Injectable()
@@ -401,6 +542,12 @@ export class AnalyticsService {
     const { timeZoneName, offsetModifier } = resolveTimezone(
       query.timezone,
       userZone,
+      toDate,
+    );
+    const offsetSegments = resolveOffsetSegments(
+      timeZoneName,
+      offsetModifier,
+      fromDate,
       toDate,
     );
 
@@ -526,10 +673,13 @@ export class AnalyticsService {
       } else {
         formatStr = '%Y-%m';
       }
-      selectCols.push(`strftime('${formatStr}', occurred_at, ?) AS bucket`);
+      const bucketOffset = offsetModifierSql(offsetSegments);
+      selectCols.push(
+        `strftime('${formatStr}', occurred_at, ${bucketOffset.sql}) AS bucket`,
+      );
       groupByCols.push('bucket');
       orderByCols.push('bucket ASC');
-      groupQueryParams.push(offsetModifier);
+      groupQueryParams.push(...bucketOffset.params);
     }
 
     if (hasAgent) {
@@ -589,7 +739,7 @@ export class AnalyticsService {
         timeBucket,
         fromDate,
         toDate,
-        offsetModifier,
+        offsetSegments,
       );
 
       const dbMap = new Map<string, UsageGroupRowDto>();
@@ -719,6 +869,12 @@ export class AnalyticsService {
       userZone,
       toDate,
     );
+    const offsetSegments = resolveOffsetSegments(
+      timeZoneName,
+      offsetModifier,
+      fromDate,
+      toDate,
+    );
 
     // 3. Interval validation
     const rawInterval = query.interval?.trim() || 'day';
@@ -807,20 +963,21 @@ export class AnalyticsService {
       formatStr = '%Y-%m';
     }
 
+    const bucketOffset = offsetModifierSql(offsetSegments);
     const bucketRows = this.db.all<{
       bucket: string;
       event_type: string;
       count: number;
     }>(
       `SELECT
-         strftime('${formatStr}', occurred_at, ?) AS bucket,
+         strftime('${formatStr}', occurred_at, ${bucketOffset.sql}) AS bucket,
          event_type,
          COUNT(*) AS count
        FROM usage_events
        ${whereSql}
        GROUP BY bucket, event_type
        ORDER BY bucket ASC`,
-      [offsetModifier, ...whereParams],
+      [...bucketOffset.params, ...whereParams],
     );
 
     const bucketMap = new Map<string, Record<string, number>>();
@@ -845,7 +1002,7 @@ export class AnalyticsService {
       interval,
       fromDate,
       toDate,
-      offsetModifier,
+      offsetSegments,
     );
 
     const series: ActivityBucketDto[] = generatedBuckets.map((b) => {
