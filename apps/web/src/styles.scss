@@ -92,8 +92,8 @@ html {
   --gb-glass-clear: light-dark(rgb(255 255 255 / 28%), rgb(12 15 19 / 24%));
   --gb-glass-regular: light-dark(rgb(255 255 255 / 48%), rgb(12 15 19 / 30%));
   --gb-glass-thick: light-dark(rgb(247 249 252 / 70%), rgb(22 26 31 / 72%));
-  --gb-glass-selected: light-dark(rgb(255 255 255 / 86%), rgb(255 255 255 / 12%));
-  --gb-glass-hover: light-dark(rgb(255 255 255 / 48%), rgb(255 255 255 / 7%));
+  --gb-glass-selected: light-dark(rgb(255 255 255 / 86%), rgb(12 15 19 / 55%));
+  --gb-glass-hover: light-dark(rgb(255 255 255 / 48%), rgb(12 15 19 / 40%));
   // A lit top edge and a hairline all round: what makes a translucent fill
   // read as a solid piece of glass rather than as a tinted hole.
   --gb-glass-rim:
