@@ -1668,4 +1668,134 @@ describe('AnalyticsService', () => {
       });
     });
   });
+
+  describe('daylight-saving transitions (per-bucket UTC offset)', () => {
+    const berlinDay = async (from: string, to: string) =>
+      (
+        await service.getUsage({
+          from,
+          to,
+          groupBy: 'day',
+          timezone: 'Europe/Berlin',
+        })
+      ).groups.map((g) => [g.bucket, g.eventCount]);
+
+    it('buckets each event with the offset in force at its own instant across a spring transition', async () => {
+      // Berlin moves from +01:00 to +02:00 at 2026-03-29T01:00:00Z.
+      // 22:30Z on the 28th is 23:30 on the 28th local (+01:00).
+      fixtures.createUsageEvent({ occurred_at: '2026-03-28T22:30:00.000Z' });
+      // 22:30Z on the 29th is 00:30 on the 30th local (+02:00).
+      fixtures.createUsageEvent({ occurred_at: '2026-03-29T22:30:00.000Z' });
+
+      expect(
+        await berlinDay('2026-03-28T00:00:00.000Z', '2026-03-31T23:59:59.999Z'),
+      ).toEqual([
+        ['2026-03-28', 1],
+        ['2026-03-29', 0],
+        ['2026-03-30', 1],
+        ['2026-03-31', 0],
+        ['2026-04-01', 0],
+      ]);
+    });
+
+    it('buckets each event with the offset in force at its own instant across an autumn transition', async () => {
+      // Berlin moves from +02:00 to +01:00 at 2026-10-25T01:00:00Z.
+      // 22:30Z on the 24th is 00:30 on the 25th local (+02:00).
+      fixtures.createUsageEvent({ occurred_at: '2026-10-24T22:30:00.000Z' });
+      // 22:30Z on the 25th is 23:30 on the 25th local (+01:00).
+      fixtures.createUsageEvent({ occurred_at: '2026-10-25T22:30:00.000Z' });
+
+      expect(
+        await berlinDay('2026-10-24T00:00:00.000Z', '2026-10-26T23:59:59.999Z'),
+      ).toEqual([
+        ['2026-10-24', 0],
+        ['2026-10-25', 2],
+        ['2026-10-26', 0],
+        ['2026-10-27', 0],
+      ]);
+    });
+
+    it('answers a historical query the same whenever it is served', async () => {
+      // 22:30Z in January is 23:30 local (+01:00); in July it is 00:30 the next day (+02:00).
+      fixtures.createUsageEvent({ occurred_at: '2026-01-15T22:30:00.000Z' });
+      fixtures.createUsageEvent({ occurred_at: '2026-07-15T22:30:00.000Z' });
+
+      const run = () =>
+        service.getUsage({
+          from: '2026-01-01T00:00:00.000Z',
+          to: '2026-07-31T23:59:59.999Z',
+          groupBy: 'day',
+          timezone: 'Europe/Berlin',
+        });
+
+      vi.useFakeTimers({ toFake: ['Date'] });
+      try {
+        vi.setSystemTime(new Date('2026-01-20T12:00:00.000Z'));
+        const servedInWinter = await run();
+        vi.setSystemTime(new Date('2026-07-20T12:00:00.000Z'));
+        const servedInSummer = await run();
+
+        expect(servedInWinter.groups).toEqual(servedInSummer.groups);
+        const counted = servedInWinter.groups
+          .filter((g) => g.eventCount > 0)
+          .map((g) => g.bucket);
+        expect(counted).toEqual(['2026-01-15', '2026-07-16']);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('keeps an explicit +02:00 offset fixed across a transition', async () => {
+      fixtures.createUsageEvent({ occurred_at: '2026-03-28T22:30:00.000Z' });
+      fixtures.createUsageEvent({ occurred_at: '2026-03-29T22:30:00.000Z' });
+
+      const result = await service.getUsage({
+        from: '2026-03-28T00:00:00.000Z',
+        to: '2026-03-31T23:59:59.999Z',
+        groupBy: 'day',
+        timezone: '+02:00',
+      });
+
+      expect(
+        result.groups.filter((g) => g.eventCount > 0).map((g) => g.bucket),
+      ).toEqual(['2026-03-29', '2026-03-30']);
+    });
+
+    it('skips the missing local hour when an hourly activity range crosses the spring transition', async () => {
+      // 00:30Z is 01:30 local (+01:00); 01:30Z is 03:30 local (+02:00).
+      fixtures.createUsageEvent({ occurred_at: '2026-03-29T00:30:00.000Z' });
+      fixtures.createUsageEvent({ occurred_at: '2026-03-29T01:30:00.000Z' });
+
+      const result = await service.getActivity({
+        from: '2026-03-29T00:00:00.000Z',
+        to: '2026-03-29T02:00:00.000Z',
+        interval: 'hour',
+        timezone: 'Europe/Berlin',
+      });
+
+      expect(result.series.map((b) => [b.bucket, b.totalCount])).toEqual([
+        ['2026-03-29T01:00', 1],
+        ['2026-03-29T03:00', 1],
+        ['2026-03-29T04:00', 0],
+      ]);
+    });
+
+    it('merges the repeated local hour when an hourly activity range crosses the autumn transition', async () => {
+      // 00:30Z is 02:30 local (+02:00); 01:30Z is 02:30 local again (+01:00).
+      fixtures.createUsageEvent({ occurred_at: '2026-10-25T00:30:00.000Z' });
+      fixtures.createUsageEvent({ occurred_at: '2026-10-25T01:30:00.000Z' });
+
+      const result = await service.getActivity({
+        from: '2026-10-25T00:00:00.000Z',
+        to: '2026-10-25T02:00:00.000Z',
+        interval: 'hour',
+        timezone: 'Europe/Berlin',
+      });
+
+      expect(result.series.map((b) => [b.bucket, b.totalCount])).toEqual([
+        ['2026-10-25T02:00', 2],
+        ['2026-10-25T03:00', 0],
+      ]);
+    });
+  });
 });
