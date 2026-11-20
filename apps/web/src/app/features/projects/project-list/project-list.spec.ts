@@ -78,6 +78,34 @@ describe('ProjectList', () => {
     expect(rows[0]?.querySelector('a')?.getAttribute('href')).toBe('/projects/p1');
   });
 
+  it('draws each row as an avatar plus its name', () => {
+    const stored = project({ hasImage: true, updatedAt: '2026-10-03T08:00:00.000Z' });
+    const initialsOnly = project({ id: 'p2', name: 'Docs', hasImage: false });
+    const { element } = setup([stored, initialsOnly]);
+    const rows = Array.from(element.querySelectorAll('.row'));
+
+    expect(rows[0]?.querySelector('.row__icon')).toBeNull();
+    expect(rows[0]?.querySelector('gb-avatar img')?.getAttribute('src')).toBe(
+      `${PROJECTS_URL}/p1/image?v=${encodeURIComponent(stored.updatedAt)}`,
+    );
+
+    expect(rows[1]?.querySelector('gb-avatar img')).toBeNull();
+    expect(rows[1]?.querySelector('gb-avatar')?.textContent).toContain('D');
+    expect(rows[1]?.textContent).toContain('Docs');
+  });
+
+  it('gives a replaced image a new URL so the browser does not keep the old one', () => {
+    const before = setup([project({ hasImage: true, updatedAt: '2026-10-02T08:00:00.000Z' })]);
+    const firstUrl = before.element.querySelector('gb-avatar img')?.getAttribute('src');
+
+    const after = setup([project({ hasImage: true, updatedAt: '2026-10-03T08:00:00.000Z' })]);
+    const secondUrl = after.element.querySelector('gb-avatar img')?.getAttribute('src');
+
+    expect(firstUrl).toBeTruthy();
+    expect(secondUrl).toBeTruthy();
+    expect(secondUrl).not.toBe(firstUrl);
+  });
+
   it('explains what a project is for when there are none', () => {
     const { element } = setup([]);
 

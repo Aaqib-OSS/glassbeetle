@@ -41,4 +41,41 @@ export class ProjectsService extends ApiClient {
   remove(projectId: string): Observable<void> {
     return this.http.delete<void>(this.url(`/projects/${projectId}`));
   }
+
+  /**
+   * Replaces the project's image (`PUT`, so it is idempotent).
+   *
+   * The server accepts any single multipart field name; `file` is used here.
+   * JPEG, PNG, WebP and GIF are permitted — SVG is rejected server-side to
+   * keep stored XSS out of the Tauri webview.
+   */
+  uploadImage(projectId: string, file: File): Observable<Project> {
+    const body = new FormData();
+    body.append('file', file, file.name);
+
+    return this.http.put<Project>(this.url(`/projects/${projectId}/image`), body);
+  }
+
+  /** Idempotent: removing an image from a project that has none still succeeds. */
+  removeImage(projectId: string): Observable<void> {
+    return this.http.delete<void>(this.url(`/projects/${projectId}/image`));
+  }
+
+  /**
+   * Stable download URL for a project's image, or `null` when none is stored.
+   *
+   * The endpoint serves one stable URL and revalidates with an `ETag`, so
+   * `updatedAt` is carried as a query parameter: it changes the URL the
+   * moment the image is replaced, which is what makes the new image appear
+   * without waiting for a conditional request to come back.
+   */
+  imageUrl(
+    project: { id: string; hasImage: boolean; updatedAt: string } | null | undefined,
+  ): string | null {
+    if (!project?.hasImage) {
+      return null;
+    }
+
+    return this.url(`/projects/${project.id}/image?v=${encodeURIComponent(project.updatedAt)}`);
+  }
 }
