@@ -305,7 +305,7 @@ export class CompletionsController {
   })
   async compactChat(
     @Param('chatId', ParseUuidV7Pipe) chatId: string,
-    @Body() dto: CompactChatDto | undefined,
+    @Body() dto?: CompactChatDto,
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ): Promise<CompactChatResponseDto> {
