@@ -15,6 +15,7 @@ import { ConversationsService } from '../../../core/workspace/conversations.serv
 import { confirm } from '../../../shared/confirm-dialog/confirm-dialog';
 import { ListState } from '../../../shared/list-state/list-state';
 import { RelativeTimePipe } from '../../../shared/relative-time/relative-time.pipe';
+import { Avatar } from '../../../shared/ui/avatar';
 import { Panel } from '../../../shared/ui/panel';
 import { Skeleton } from '../../../shared/ui/skeleton';
 import { ProjectDialog, type ProjectDialogData } from '../project-dialog/project-dialog';
@@ -25,6 +26,7 @@ import { ProjectDialog, type ProjectDialogData } from '../project-dialog/project
 @Component({
   selector: 'app-project-list',
   imports: [
+    Avatar,
     MatButtonModule,
     MatIconModule,
     MatMenuModule,
@@ -77,6 +79,10 @@ export class ProjectList {
         void this.router.navigate(['/projects', project.id]);
       }
     });
+  }
+
+  protected imageUrl(project: Project): string | null {
+    return this.projects.imageUrl(project);
   }
 
   protected edit(project: Project): void {

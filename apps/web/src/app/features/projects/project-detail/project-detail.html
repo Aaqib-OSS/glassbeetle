@@ -34,18 +34,35 @@
     </div>
   } @else if (project(); as current) {
     <header class="view__head">
-      <div class="head__text">
-        <h1 class="view__title">{{ current.name }}</h1>
-        <p class="view__subtitle">
-          @if (current.description) {
-            {{ current.description }}
-          } @else {
-            <span class="unset">No description</span>
-          }
-        </p>
+      <div class="head__identity">
+        <gb-avatar [name]="current.name" [imageUrl]="imageUrl()" size="large" />
+
+        <div class="head__text">
+          <h1 class="view__title">{{ current.name }}</h1>
+          <p class="view__subtitle">
+            @if (current.description) {
+              {{ current.description }}
+            } @else {
+              <span class="unset">No description</span>
+            }
+          </p>
+        </div>
       </div>
 
       <div class="head__actions">
+        <input
+          #picker
+          type="file"
+          class="sr-only"
+          [accept]="acceptedTypes"
+          (change)="onImageSelected($event)"
+        />
+
+        <button matButton [disabled]="uploading()" (click)="picker.click()">
+          <mat-icon>photo_camera</mat-icon>
+          {{ current.hasImage ? 'Replace image' : 'Add image' }}
+        </button>
+
         <a matButton="filled" routerLink="/chats/new" [queryParams]="{ projectId: current.id }">
           <mat-icon>edit_square</mat-icon>
           New chat
@@ -57,6 +74,10 @@
       </div>
 
       <mat-menu #menu>
+        <button mat-menu-item [disabled]="!current.hasImage || uploading()" (click)="removeImage()">
+          <mat-icon>hide_image</mat-icon>
+          <span>Remove image</span>
+        </button>
         <button mat-menu-item (click)="edit()">
           <mat-icon>edit</mat-icon>
           <span>Edit</span>

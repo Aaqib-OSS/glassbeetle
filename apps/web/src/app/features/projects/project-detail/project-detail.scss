@@ -6,6 +6,14 @@
 @include view.rows;
 @include record-rows.record-rows;
 
+.head__identity {
+  display: flex;
+  align-items: center;
+  gap: 0.875rem;
+  flex: 1 1 20rem;
+  min-width: 0;
+}
+
 .head__text {
   flex: 1 1 16rem;
   min-width: 0;

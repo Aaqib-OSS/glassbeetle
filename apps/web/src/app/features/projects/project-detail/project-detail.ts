@@ -7,6 +7,7 @@ import { MatMenuModule } from '@angular/material/menu';
 import { Router, RouterLink } from '@angular/router';
 import { Subject, catchError, firstValueFrom, forkJoin, map, of, switchMap } from 'rxjs';
 
+import { ACCEPTED_PICTURE_TYPES } from '../../../core/api/agents.models';
 import { describeApiError, toApiError, type ApiError } from '../../../core/api/api-error';
 import { artifactIcon, type Artifact } from '../../../core/api/artifacts.models';
 import { ArtifactsService } from '../../../core/api/artifacts.service';
@@ -19,6 +20,7 @@ import { AgentRosterService } from '../../../core/workspace/agent-roster.service
 import { ConversationsService } from '../../../core/workspace/conversations.service';
 import { confirm } from '../../../shared/confirm-dialog/confirm-dialog';
 import { RelativeTimePipe } from '../../../shared/relative-time/relative-time.pipe';
+import { Avatar } from '../../../shared/ui/avatar';
 import { Panel } from '../../../shared/ui/panel';
 import { Skeleton } from '../../../shared/ui/skeleton';
 import { ProjectDialog, type ProjectDialogData } from '../project-dialog/project-dialog';
@@ -50,6 +52,7 @@ interface LoadResult {
 @Component({
   selector: 'app-project-detail',
   imports: [
+    Avatar,
     MatButtonModule,
     MatIconModule,
     MatMenuModule,
@@ -80,6 +83,11 @@ export class ProjectDetail {
   protected readonly contents = signal<Contents | null>(null);
   protected readonly loading = signal(true);
   protected readonly error = signal<ApiError | null>(null);
+  protected readonly uploading = signal(false);
+
+  protected readonly acceptedTypes = ACCEPTED_PICTURE_TYPES.join(',');
+
+  protected readonly imageUrl = computed(() => this.projects.imageUrl(this.project()));
 
   /** The project's conversations, each named with who it is with. */
   protected readonly chats = computed(() =>
@@ -165,6 +173,65 @@ export class ProjectDetail {
         this.project.set(saved);
       }
     });
+  }
+
+  /**
+   * Uploads a project image.
+   *
+   * The type is checked here as well as on the server so an obviously wrong
+   * file is rejected before it is read and sent; the server's check, which
+   * reads the file's magic bytes, is the one that matters.
+   */
+  protected async onImageSelected(event: Event): Promise<void> {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    // Clearing lets the same file be chosen again after a failure.
+    input.value = '';
+
+    if (!file) {
+      return;
+    }
+
+    if (!ACCEPTED_PICTURE_TYPES.includes(file.type)) {
+      this.notify.error(null, 'Images must be JPEG, PNG, WebP or GIF. SVG is not accepted.');
+      return;
+    }
+
+    const project = this.project();
+    if (!project) {
+      return;
+    }
+
+    this.uploading.set(true);
+
+    try {
+      const updated = await firstValueFrom(this.projects.uploadImage(project.id, file));
+      this.project.set(updated);
+      this.notify.success('Image uploaded.');
+    } catch (error) {
+      this.notify.error(error, 'Could not upload the image.');
+    } finally {
+      this.uploading.set(false);
+    }
+  }
+
+  protected async removeImage(): Promise<void> {
+    const project = this.project();
+    if (!project) {
+      return;
+    }
+
+    this.uploading.set(true);
+
+    try {
+      await firstValueFrom(this.projects.removeImage(project.id));
+      this.project.set({ ...project, hasImage: false });
+      this.notify.success('Image removed.');
+    } catch (error) {
+      this.notify.error(error, 'Could not remove the image.');
+    } finally {
+      this.uploading.set(false);
+    }
   }
 
   protected async remove(): Promise<void> {
