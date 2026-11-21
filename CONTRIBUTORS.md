@@ -25,7 +25,7 @@ the `question` label.
 ## Contributors ✨
 
 <!-- ALL-CONTRIBUTORS-BADGE:START - Do not remove or modify this section -->
-[![All Contributors](https://img.shields.io/badge/all_contributors-21-orange.svg?style=flat-square)](#contributors-)
+[![All Contributors](https://img.shields.io/badge/all_contributors-22-orange.svg?style=flat-square)](#contributors-)
 <!-- ALL-CONTRIBUTORS-BADGE:END -->
 
 Maintained by the [all-contributors](https://allcontributors.org) bot. Emoji
@@ -63,6 +63,9 @@ each one means.
       <td align="center" valign="top" width="14.28%"><a href="https://md-stats-auditor-celes.streamlit.app/"><img src="https://avatars.githubusercontent.com/u/275288138?v=4&size=100" width="100px" height="100px" alt="Celeste Protein laboratory"/><br /><sub><b>Celeste Protein laboratory</b></sub></a><br /><a href="https://github.com/Open-Glassbeetle/glassbeetle/commits?author=celes26protein-lab" title="Documentation">📖</a></td>
       <td align="center" valign="top" width="14.28%"><a href="https://www.basuoikantik.in/"><img src="https://avatars.githubusercontent.com/u/140976895?v=4&size=100" width="100px" height="100px" alt="Oikantik Basu"/><br /><sub><b>Oikantik Basu</b></sub></a><br /><a href="https://github.com/Open-Glassbeetle/glassbeetle/commits?author=Golden007-prog" title="Code">💻</a></td>
       <td align="center" valign="top" width="14.28%"><a href="https://www.webioo.com.tr/"><img src="https://avatars.githubusercontent.com/u/73295089?v=4&size=100" width="100px" height="100px" alt="Emre Öcel"/><br /><sub><b>Emre Öcel</b></sub></a><br /><a href="https://github.com/Open-Glassbeetle/glassbeetle/commits?author=emreocell" title="Code">💻</a></td>
+    </tr>
+    <tr>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/gauravchahal20"><img src="https://avatars.githubusercontent.com/u/183644790?v=4&size=100" width="100px" height="100px" alt="Gaurav Chahal"/><br /><sub><b>Gaurav Chahal</b></sub></a><br /><a href="https://github.com/Open-Glassbeetle/glassbeetle/commits?author=gauravchahal20" title="Code">💻</a></td>
     </tr>
   </tbody>
 </table>
