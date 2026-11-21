@@ -98,3 +98,47 @@ jobs:
 
       - name: Run E2E tests
         run: npm run test:e2e -w @glassbeetle/api
+
+  desktop-rust:
+    name: Desktop Rust (fmt & clippy)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Install Tauri Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            librsvg2-dev \
+            libayatana-appindicator3-dev
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@1.100.0
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache Cargo dependencies and build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            apps/desktop/src-tauri/target
+          key: cargo-${{ runner.os }}-1.100.0-${{ hashFiles('apps/desktop/src-tauri/Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-1.100.0-
+
+      - name: Check Rust formatting
+        run: cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml --check
+
+      - name: Compile and lint desktop shell
+        run: cargo clippy --locked --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets
