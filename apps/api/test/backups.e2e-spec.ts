@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import * as tar from 'tar';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createTestApp, type TestApp } from './harness/index.js';
 
 describe('Backups endpoints (e2e)', () => {
@@ -342,6 +342,228 @@ describe('Backups endpoints (e2e)', () => {
         .request()
         .delete('/api/v1/application/backups/invalid-id')
         .expect(400);
+    });
+  });
+
+  describe('GET /api/v1/application/backups/:backupId/download', () => {
+    it('downloads backup archive and asserts received bytes are byte-for-byte identical to the archive on disk', async () => {
+      testApp.fixtures.createSystemPrompt({ name: 'Backup Download Prompt' });
+
+      const createRes = await testApp
+        .request()
+        .post('/api/v1/application/backups')
+        .send({ label: 'Download Test Snapshot' })
+        .expect(201);
+
+      const row = testApp.db.get<{ file_path: string; created_at: string }>(
+        'SELECT file_path, created_at FROM backups WHERE id = ?',
+        [createRes.body.id],
+      );
+      const archivePath = path.join(testApp.dataDir, 'backups', row!.file_path);
+      const expectedBytes = fs.readFileSync(archivePath);
+
+      const downloadRes = await testApp
+        .request()
+        .get(`/api/v1/application/backups/${createRes.body.id}/download`)
+        .responseType('blob')
+        .expect(200);
+
+      expect(downloadRes.body).toEqual(expectedBytes);
+      expect(downloadRes.headers['content-type']).toBe('application/gzip');
+      expect(downloadRes.headers['content-length']).toBe(
+        String(expectedBytes.length),
+      );
+      expect(downloadRes.headers['accept-ranges']).toBe('bytes');
+      expect(downloadRes.headers['x-content-type-options']).toBe('nosniff');
+      expect(downloadRes.headers['cache-control']).toContain('no-cache');
+
+      const expectedSafeTimestamp = row!.created_at.replace(/:/g, '-');
+      expect(downloadRes.headers['content-disposition']).toBe(
+        `attachment; filename="glassbeetle-backup-${expectedSafeTimestamp}.tar.gz"`,
+      );
+    });
+
+    it('streams a large archive without buffering the whole file into memory', async () => {
+      const largeSize = 512 * 1024; // 512 KiB binary payload
+      const largeData = Buffer.alloc(largeSize);
+      for (let i = 0; i < largeData.length; i++) {
+        largeData[i] = i % 256;
+      }
+
+      const backupId = '018f3a9e-0000-7000-8000-000000000555';
+      const fileName = `backup-${backupId}.tar.gz`;
+      const archivePath = path.join(testApp.dataDir, 'backups', fileName);
+      fs.mkdirSync(path.dirname(archivePath), { recursive: true });
+      fs.writeFileSync(archivePath, largeData);
+
+      const createdAt = '2026-11-20T12:00:00.000Z';
+      testApp.db.run(
+        `INSERT INTO backups (id, file_path, size_bytes, trigger, created_at)
+         VALUES (?, ?, ?, 'manual', ?)`,
+        [backupId, fileName, largeSize, createdAt],
+      );
+
+      const createReadStreamSpy = vi.spyOn(fs, 'createReadStream');
+
+      const downloadRes = await testApp
+        .request()
+        .get(`/api/v1/application/backups/${backupId}/download`)
+        .responseType('blob')
+        .expect(200);
+
+      expect(createReadStreamSpy).toHaveBeenCalled();
+      expect(downloadRes.body).toEqual(largeData);
+      expect(downloadRes.headers['content-length']).toBe(String(largeSize));
+
+      createReadStreamSpy.mockRestore();
+    });
+
+    it('supports HTTP byte-range requests with 206 Partial Content', async () => {
+      const data = Buffer.from('GLASSBEETLE_BACKUP_STREAMING_RANGE_TEST_BYTES');
+      const backupId = '018f3a9e-0000-7000-8000-000000000444';
+      const fileName = `backup-${backupId}.tar.gz`;
+      const archivePath = path.join(testApp.dataDir, 'backups', fileName);
+      fs.mkdirSync(path.dirname(archivePath), { recursive: true });
+      fs.writeFileSync(archivePath, data);
+
+      testApp.db.run(
+        `INSERT INTO backups (id, file_path, size_bytes, trigger, created_at)
+         VALUES (?, ?, ?, 'manual', '2026-11-20T12:00:00.000Z')`,
+        [backupId, fileName, data.length],
+      );
+
+      // Request bytes 0 to 10 inclusive (11 bytes: 'GLASSBEETLE')
+      const rangeRes = await testApp
+        .request()
+        .get(`/api/v1/application/backups/${backupId}/download`)
+        .set('Range', 'bytes=0-10')
+        .responseType('blob')
+        .expect(206);
+
+      expect(rangeRes.body).toEqual(data.subarray(0, 11));
+      expect(rangeRes.headers['content-range']).toBe(`bytes 0-10/${data.length}`);
+      expect(rangeRes.headers['content-length']).toBe('11');
+      expect(rangeRes.headers['content-type']).toBe('application/gzip');
+      expect(rangeRes.headers['accept-ranges']).toBe('bytes');
+    });
+
+    it('returns 416 Range Not Satisfiable when range is out of bounds', async () => {
+      const data = Buffer.from('SHORT_ARCHIVE');
+      const backupId = '018f3a9e-0000-7000-8000-000000000333';
+      const fileName = `backup-${backupId}.tar.gz`;
+      const archivePath = path.join(testApp.dataDir, 'backups', fileName);
+      fs.mkdirSync(path.dirname(archivePath), { recursive: true });
+      fs.writeFileSync(archivePath, data);
+
+      testApp.db.run(
+        `INSERT INTO backups (id, file_path, size_bytes, trigger, created_at)
+         VALUES (?, ?, ?, 'manual', '2026-11-20T12:00:00.000Z')`,
+        [backupId, fileName, data.length],
+      );
+
+      const res = await testApp
+        .request()
+        .get(`/api/v1/application/backups/${backupId}/download`)
+        .set('Range', 'bytes=500-1000')
+        .expect(416);
+
+      expect(res.headers['content-range']).toBe(`bytes */${data.length}`);
+    });
+
+    it('returns 404 NOT_FOUND for unknown valid UUIDv7 backupId', async () => {
+      const res = await testApp
+        .request()
+        .get(
+          '/api/v1/application/backups/018f3a9e-0000-7000-8000-000000000999/download',
+        )
+        .expect(404);
+
+      expect(res.body).toMatchObject({
+        statusCode: 404,
+        code: 'BACKUP_NOT_FOUND',
+      });
+      // Assert no path in response
+      expect(JSON.stringify(res.body)).not.toContain(testApp.dataDir);
+    });
+
+    it('returns 400 INVALID_IDENTIFIER for malformed ID', async () => {
+      await testApp
+        .request()
+        .get('/api/v1/application/backups/not-a-valid-uuid/download')
+        .expect(400);
+    });
+
+    it('returns 410 GONE when backup record exists but archive file was deleted externally', async () => {
+      const createRes = await testApp
+        .request()
+        .post('/api/v1/application/backups')
+        .expect(201);
+
+      const row = testApp.db.get<{ file_path: string }>(
+        'SELECT file_path FROM backups WHERE id = ?',
+        [createRes.body.id],
+      );
+      const archivePath = path.join(testApp.dataDir, 'backups', row!.file_path);
+      fs.unlinkSync(archivePath);
+
+      const res = await testApp
+        .request()
+        .get(`/api/v1/application/backups/${createRes.body.id}/download`)
+        .expect(410);
+
+      expect(res.body).toMatchObject({
+        statusCode: 410,
+        code: 'BACKUP_ARCHIVE_GONE',
+        message: 'Backup archive file is missing from disk',
+      });
+      // Assert no filesystem paths in error response
+      expect(JSON.stringify(res.body)).not.toContain(testApp.dataDir);
+      expect(JSON.stringify(res.body)).not.toContain(row!.file_path);
+    });
+
+    it('rejects a file_path pointing outside the expected backup directory (400 Bad Request)', async () => {
+      const escapeId = '018f3a9e-0000-7000-8000-000000000222';
+      // Construct a case directly in the database pointing to an outside file
+      testApp.db.run(
+        `INSERT INTO backups (id, file_path, size_bytes, trigger, created_at)
+         VALUES (?, '/tmp/glassbeetle-escaped-backup.tar.gz', 100, 'manual', '2026-11-20T12:00:00.000Z')`,
+        [escapeId],
+      );
+
+      const res = await testApp
+        .request()
+        .get(`/api/v1/application/backups/${escapeId}/download`)
+        .expect(400);
+
+      expect(res.body).toMatchObject({
+        statusCode: 400,
+        code: 'INVALID_BACKUP_PATH',
+        message: 'Backup archive path escapes the backup directory boundary',
+      });
+      // Assert no filesystem path is leaked in response
+      expect(JSON.stringify(res.body)).not.toContain('/tmp');
+      expect(JSON.stringify(res.body)).not.toContain(testApp.dataDir);
+    });
+
+    it('rejects a file_path with directory traversal sequences (400 Bad Request)', async () => {
+      const traversalId = '018f3a9e-0000-7000-8000-000000000111';
+      testApp.db.run(
+        `INSERT INTO backups (id, file_path, size_bytes, trigger, created_at)
+         VALUES (?, '../../etc/passwd', 100, 'manual', '2026-11-20T12:00:00.000Z')`,
+        [traversalId],
+      );
+
+      const res = await testApp
+        .request()
+        .get(`/api/v1/application/backups/${traversalId}/download`)
+        .expect(400);
+
+      expect(res.body).toMatchObject({
+        statusCode: 400,
+        code: 'INVALID_BACKUP_PATH',
+      });
+      expect(JSON.stringify(res.body)).not.toContain('..');
+      expect(JSON.stringify(res.body)).not.toContain(testApp.dataDir);
     });
   });
 });
