@@ -434,7 +434,7 @@ describe('CompletionsController', () => {
       const res = new EventEmitter() as unknown as Response;
       (res as unknown as { writableEnded: boolean }).writableEnded = false;
 
-      const result = await controller.compactChat(chatId, dto, req, res);
+      const result = await controller.compactChat(chatId, req, res, dto);
 
       expect(result).toBe(mockResult);
       expect(mockInferenceService.compactChat).toHaveBeenCalledWith(
@@ -464,7 +464,7 @@ describe('CompletionsController', () => {
       (res as unknown as { writableEnded: boolean }).writableEnded = false;
 
       await expect(
-        controller.compactChat(chatId, undefined, req, res),
+        controller.compactChat(chatId, req, res, undefined),
       ).rejects.toThrow('Aborted');
     });
 
@@ -485,9 +485,9 @@ describe('CompletionsController', () => {
 
       const compactPromise = controller.compactChat(
         chatId,
-        undefined,
         req,
         res,
+        undefined,
       );
 
       // Simulate client disconnect mid-flight
