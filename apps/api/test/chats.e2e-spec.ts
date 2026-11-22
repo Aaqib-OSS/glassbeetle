@@ -1367,5 +1367,30 @@ describe('Chats endpoints (e2e)', () => {
         .expect(400);
     });
   });
+
+  describe('Compaction body validation (POST /api/v1/chats/:chatId/compact)', () => {
+    it.each([
+      [{ modelId: '' }, 'modelId must not be empty'],
+      [{ preserveRecentCount: -1 }, 'preserveRecentCount must be at least 0'],
+    ])('rejects %j with 400 before compaction runs', async (body, message) => {
+      const agent = createAgent();
+      const created = await createChat({ agentId: agent.id });
+      const compactChat = vi
+        .spyOn(InferenceService.prototype, 'compactChat')
+        .mockResolvedValue({} as never);
+
+      try {
+        const res = await testApp
+          .request()
+          .post(`/api/v1/chats/${created.id}/compact`)
+          .send(body)
+          .expect(400);
+        expect(JSON.stringify(res.body)).toContain(message);
+        expect(compactChat).not.toHaveBeenCalled();
+      } finally {
+        compactChat.mockRestore();
+      }
+    });
+  });
 });
 

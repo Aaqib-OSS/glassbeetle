@@ -305,9 +305,12 @@ export class CompletionsController {
   })
   async compactChat(
     @Param('chatId', ParseUuidV7Pipe) chatId: string,
-    @Body() dto?: CompactChatDto,
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
+    // WHY: Last, so it can stay optional (`dto?:`) and still be typed as
+    // CompactChatDto. Its emitted design type is what ValidationPipe validates
+    // against (#368); `CompactChatDto | undefined` would emit Object and skip it.
+    @Body() dto?: CompactChatDto,
   ): Promise<CompactChatResponseDto> {
     const abortController = new AbortController();
 
