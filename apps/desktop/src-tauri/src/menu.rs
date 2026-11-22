@@ -16,7 +16,9 @@
 //! anything — the Angular shell owns the one implementation, which the keyboard
 //! and the workspace panel reach too.
 
-use tauri::menu::{AboutMetadataBuilder, Menu, MenuItemBuilder, SubmenuBuilder};
+#[cfg(target_os = "macos")]
+use tauri::menu::AboutMetadataBuilder;
+use tauri::menu::{Menu, MenuItemBuilder, SubmenuBuilder};
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 use tauri_plugin_opener::OpenerExt;
 
