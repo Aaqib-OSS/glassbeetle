@@ -1,0 +1,7 @@
+# The toolchain CI uses (dtolnay/rust-toolchain@1.100.0 in .github/workflows/ci.yml).
+# `rust-version` in Cargo.toml is the oldest compiler the locked tree builds on;
+# this file is the one contributors get by default. Bump both together.
+[toolchain]
+channel = "1.100.0"
+components = ["clippy", "rustfmt"]
+profile = "minimal"
