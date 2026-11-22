@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  GoneException,
   HttpException,
   HttpStatus,
   InternalServerErrorException,
@@ -766,6 +767,142 @@ describe('BackupsService', () => {
       await expect(
         backupsService.deleteBackup('018f3a9e-0000-7000-8000-000000000999'),
       ).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('getBackupArchive & resolveAndValidateArchivePath', () => {
+    it('returns stream info with accurate size and readable stream of archive bytes', async () => {
+      const backup = await backupsService.createBackup({
+        trigger: 'manual',
+        label: 'Download Test',
+      });
+
+      const archiveInfo = await backupsService.getBackupArchive(backup.id);
+      expect(archiveInfo.id).toBe(backup.id);
+      expect(archiveInfo.createdAt).toBe(backup.createdAt);
+      expect(archiveInfo.sizeBytes).toBe(backup.sizeBytes);
+      expect(typeof archiveInfo.openStream).toBe('function');
+
+      const stream = archiveInfo.openStream();
+      const chunks: Buffer[] = [];
+      await new Promise<void>((resolve, reject) => {
+        stream.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+        stream.on('end', () => resolve());
+        stream.on('error', reject);
+      });
+
+      const streamedBuffer = Buffer.concat(chunks);
+      expect(streamedBuffer.length).toBe(backup.sizeBytes);
+
+      const row = dbService.get<{ file_path: string }>(
+        'SELECT file_path FROM backups WHERE id = ?',
+        [backup.id],
+      );
+      const actualFileBytes = fs.readFileSync(
+        path.join(testDataDir, 'backups', row!.file_path),
+      );
+      expect(streamedBuffer).toEqual(actualFileBytes);
+    });
+
+    it('supports scoped byte range in openStream', async () => {
+      const backup = await backupsService.createBackup();
+      const archiveInfo = await backupsService.getBackupArchive(backup.id);
+
+      const stream = archiveInfo.openStream({ start: 0, end: 15 });
+      const chunks: Buffer[] = [];
+      await new Promise<void>((resolve, reject) => {
+        stream.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+        stream.on('end', () => resolve());
+        stream.on('error', reject);
+      });
+
+      const streamedBuffer = Buffer.concat(chunks);
+      expect(streamedBuffer.length).toBe(16);
+
+      const row = dbService.get<{ file_path: string }>(
+        'SELECT file_path FROM backups WHERE id = ?',
+        [backup.id],
+      );
+      const actualFileBytes = fs.readFileSync(
+        path.join(testDataDir, 'backups', row!.file_path),
+      );
+      expect(streamedBuffer).toEqual(actualFileBytes.subarray(0, 16));
+    });
+
+    it('throws NotFoundException (404) for unknown backup ID', async () => {
+      await expect(
+        backupsService.getBackupArchive('018f3a9e-0000-7000-8000-000000000999'),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('throws GoneException (410) when row exists but archive file was deleted', async () => {
+      const backup = await backupsService.createBackup();
+      const row = dbService.get<{ file_path: string }>(
+        'SELECT file_path FROM backups WHERE id = ?',
+        [backup.id],
+      );
+
+      fs.unlinkSync(path.join(testDataDir, 'backups', row!.file_path));
+
+      await expect(
+        backupsService.getBackupArchive(backup.id),
+      ).rejects.toThrow(GoneException);
+    });
+
+    it('rejects a database row whose file_path points outside the backup directory (absolute path)', async () => {
+      const outsideId = '018f3a9e-0000-7000-8000-000000000888';
+      const outsideFile = path.join(tempBaseDir, 'outside.tar.gz');
+      fs.writeFileSync(outsideFile, 'secret outside archive');
+
+      dbService.run(
+        `INSERT INTO backups (id, file_path, size_bytes, trigger, created_at)
+         VALUES (?, ?, 20, 'manual', ?)`,
+        [outsideId, outsideFile, nowIso()],
+      );
+
+      await expect(
+        backupsService.getBackupArchive(outsideId),
+      ).rejects.toSatisfy((err: unknown) => {
+        expect(err).toBeInstanceOf(BadRequestException);
+        const res = (err as BadRequestException).getResponse();
+        // Assert no absolute filesystem path appears in error response
+        const resStr = JSON.stringify(res);
+        expect(resStr).not.toContain(tempBaseDir);
+        expect(resStr).not.toContain(outsideFile);
+        expect((res as any).code).toBe('INVALID_BACKUP_PATH');
+        return true;
+      });
+    });
+
+    it('rejects a database row whose file_path contains directory traversal (relative ../)', async () => {
+      const traversalId = '018f3a9e-0000-7000-8000-000000000777';
+      dbService.run(
+        `INSERT INTO backups (id, file_path, size_bytes, trigger, created_at)
+         VALUES (?, '../../outside.tar.gz', 20, 'manual', ?)`,
+        [traversalId, nowIso()],
+      );
+
+      await expect(
+        backupsService.getBackupArchive(traversalId),
+      ).rejects.toSatisfy((err: unknown) => {
+        expect(err).toBeInstanceOf(BadRequestException);
+        const res = (err as BadRequestException).getResponse();
+        expect(JSON.stringify(res)).not.toContain('..');
+        expect((res as any).code).toBe('INVALID_BACKUP_PATH');
+        return true;
+      });
+    });
+
+    it('rejects a database row whose file_path contains illegal null bytes', () => {
+      expect(() =>
+        backupsService.resolveAndValidateArchivePath({
+          id: 'null-test',
+          file_path: 'backup\0null.tar.gz',
+          size_bytes: 10,
+          trigger: 'manual',
+          created_at: nowIso(),
+        }),
+      ).toThrow(BadRequestException);
     });
   });
 });

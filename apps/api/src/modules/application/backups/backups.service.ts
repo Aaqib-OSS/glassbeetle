@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  GoneException,
   HttpException,
   HttpStatus,
   Injectable,
@@ -27,6 +28,7 @@ import { DatabaseService } from '../../../database/database.service.js';
 import { FileStorageService } from '../../../file-storage/file-storage.service.js';
 import {
   ALLOWED_BACKUP_SORT_COLUMNS,
+  type BackupArchiveStreamInfo,
   type BackupFileInventoryItem,
   type BackupManifest,
   type BackupRecordRow,
@@ -416,10 +418,199 @@ export class BackupsService {
         }
       } catch (unlinkError) {
         this.logger.warn(
-          `Failed to unlink backup archive file "${row.file_path}" for backup "${id}": ${unlinkError instanceof Error ? unlinkError.message : String(unlinkError)}`,
+          `Failed to unlink backup archive file for backup "${id}": ${unlinkError instanceof Error ? unlinkError.message : String(unlinkError)}`,
         );
       }
     }
+  }
+
+  /**
+   * Retrieves archive metadata and an open stream factory for streaming the archive download.
+   *
+   * ## Security & Integrity
+   * - Validates that the archive path strictly resides inside the configured backup directory.
+   * - Performs a fresh filesystem stat to verify the archive exists and record exact size.
+   * - Does not expose filesystem paths in error messages or exceptions.
+   *
+   * @param id - Backup UUIDv7 identifier.
+   * @returns Streaming info containing id, createdAt, fresh stat sizeBytes, and openStream.
+   * @throws NotFoundException (404) if no backup row exists with the given ID.
+   * @throws BadRequestException (400) if the stored archive path escapes the backup directory.
+   * @throws GoneException (410) if the backup row exists but the physical archive file is missing.
+   */
+  async getBackupArchive(id: string): Promise<BackupArchiveStreamInfo> {
+    const row = this.databaseService.get<BackupRecordRow>(
+      'SELECT * FROM backups WHERE id = ?',
+      [id],
+    );
+    if (!row) {
+      throw new NotFoundException({
+        code: 'BACKUP_NOT_FOUND',
+        message: `No backup found with ID "${id}"`,
+      });
+    }
+
+    const archivePath = this.resolveAndValidateArchivePath(row);
+
+    if (!existsSync(archivePath)) {
+      throw new GoneException({
+        code: 'BACKUP_ARCHIVE_GONE',
+        message: 'Backup archive file is missing from disk',
+      });
+    }
+
+    let stats: fs.Stats;
+    try {
+      stats = await fs.promises.stat(archivePath);
+    } catch {
+      throw new GoneException({
+        code: 'BACKUP_ARCHIVE_GONE',
+        message: 'Backup archive file is missing from disk',
+      });
+    }
+
+    if (!stats.isFile()) {
+      throw new GoneException({
+        code: 'BACKUP_ARCHIVE_GONE',
+        message: 'Backup archive file is missing from disk',
+      });
+    }
+
+    return {
+      id: row.id,
+      createdAt: row.created_at,
+      sizeBytes: stats.size,
+      openStream: (range?: { start?: number; end?: number }) => {
+        return fs.createReadStream(archivePath, range);
+      },
+    };
+  }
+
+  /**
+   * Resolves and strictly validates the on-disk archive path for a backup record.
+   *
+   * ## Security Considerations
+   * `file_path` is stored in the database. Even though it is originally generated
+   * by the application, `target_directory` is user-configurable and database values
+   * might be altered or contain legacy paths. Handing stored paths unchecked to the
+   * filesystem could allow directory traversal, root escape, or arbitrary file read/write.
+   *
+   * Enforced validation rules:
+   * 1. Rejects null bytes (`\0`) and empty paths.
+   * 2. Resolves relative references strictly against the target directory.
+   * 3. Confirms the normalized path is strictly contained within the target directory
+   *    (preventing `../` traversal and sibling prefix attacks).
+   * 4. For existing files, validates via `realpath` that symlinks within the target
+   *    directory do not point outside its boundary.
+   * 5. Never leaks filesystem paths into error messages or response bodies.
+   *
+   * @param row - Backup database record row.
+   * @returns Validated absolute path to the archive file.
+   * @throws BadRequestException (400) if the path escapes the target directory boundary.
+   */
+  resolveAndValidateArchivePath(row: BackupRecordRow): string {
+    const rawRef = row.file_path;
+    if (
+      typeof rawRef !== 'string' ||
+      rawRef.trim().length === 0 ||
+      rawRef.includes('\0')
+    ) {
+      throw new BadRequestException({
+        code: 'INVALID_BACKUP_PATH',
+        message: 'Backup archive path is invalid',
+      });
+    }
+
+    const targetDir = path.resolve(this.resolveTargetDirectory());
+
+    const resolvedPath = path.isAbsolute(rawRef)
+      ? path.resolve(rawRef)
+      : path.resolve(targetDir, rawRef);
+
+    const relative = path.relative(targetDir, resolvedPath);
+    const isWindows = process.platform === 'win32';
+    const relCheck = isWindows ? relative.toLowerCase() : relative;
+
+    if (
+      relCheck === '' ||
+      relCheck === '..' ||
+      relCheck.startsWith(`..${path.sep}`) ||
+      relCheck.startsWith('../') ||
+      relCheck.startsWith('..\\') ||
+      path.isAbsolute(relative)
+    ) {
+      throw new BadRequestException({
+        code: 'INVALID_BACKUP_PATH',
+        message: 'Backup archive path escapes the backup directory boundary',
+      });
+    }
+
+    const targetWithSep = targetDir.endsWith(path.sep)
+      ? targetDir
+      : `${targetDir}${path.sep}`;
+    const targetForPrefix = isWindows
+      ? targetWithSep.toLowerCase()
+      : targetWithSep;
+    const resolvedForPrefix = isWindows
+      ? resolvedPath.toLowerCase()
+      : resolvedPath;
+
+    if (!resolvedForPrefix.startsWith(targetForPrefix)) {
+      throw new BadRequestException({
+        code: 'INVALID_BACKUP_PATH',
+        message: 'Backup archive path escapes the backup directory boundary',
+      });
+    }
+
+    if (existsSync(resolvedPath)) {
+      try {
+        const realTarget = fs.realpathSync(targetDir);
+        const realResolved = fs.realpathSync(resolvedPath);
+        const realRel = path.relative(realTarget, realResolved);
+        const realRelCheck = isWindows ? realRel.toLowerCase() : realRel;
+
+        if (
+          realRelCheck === '' ||
+          realRelCheck === '..' ||
+          realRelCheck.startsWith(`..${path.sep}`) ||
+          realRelCheck.startsWith('../') ||
+          realRelCheck.startsWith('..\\') ||
+          path.isAbsolute(realRel)
+        ) {
+          throw new BadRequestException({
+            code: 'INVALID_BACKUP_PATH',
+            message: 'Backup archive path escapes the backup directory boundary',
+          });
+        }
+
+        const realTargetWithSep = realTarget.endsWith(path.sep)
+          ? realTarget
+          : `${realTarget}${path.sep}`;
+        const realTargetForPrefix = isWindows
+          ? realTargetWithSep.toLowerCase()
+          : realTargetWithSep;
+        const realResolvedForPrefix = isWindows
+          ? realResolved.toLowerCase()
+          : realResolved;
+
+        if (!realResolvedForPrefix.startsWith(realTargetForPrefix)) {
+          throw new BadRequestException({
+            code: 'INVALID_BACKUP_PATH',
+            message: 'Backup archive path escapes the backup directory boundary',
+          });
+        }
+      } catch (err) {
+        if (err instanceof BadRequestException) {
+          throw err;
+        }
+        throw new BadRequestException({
+          code: 'INVALID_BACKUP_PATH',
+          message: 'Backup archive path escapes the backup directory boundary',
+        });
+      }
+    }
+
+    return resolvedPath;
   }
 
   /**
@@ -431,9 +622,8 @@ export class BackupsService {
   private mapRowToResponse(row: BackupRecordRow): BackupResponseDto {
     let fileExists = false;
     try {
-      fileExists = Boolean(
-        row.file_path && existsSync(this.archivePathFor(row)),
-      );
+      const archivePath = this.archivePathFor(row);
+      fileExists = Boolean(archivePath && existsSync(archivePath));
     } catch {
       fileExists = false;
     }
@@ -451,14 +641,10 @@ export class BackupsService {
   /**
    * Resolves the on-disk archive path for a backup row.
    *
-   * `file_path` stores the archive filename. Legacy rows may hold an absolute
-   * path, so only its basename is resolved against the target directory.
+   * Enforces containment within the target directory.
    */
   private archivePathFor(row: BackupRecordRow): string {
-    return path.join(
-      this.resolveTargetDirectory(),
-      path.basename(row.file_path),
-    );
+    return this.resolveAndValidateArchivePath(row);
   }
 
   /**
