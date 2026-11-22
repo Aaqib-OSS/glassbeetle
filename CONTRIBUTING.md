@@ -289,9 +289,10 @@ npm run build                             # type-check both apps the way CI does
 
 [CI](.github/workflows/ci.yml) runs lint, build, unit tests, e2e tests
 and desktop Rust checks on every pull request and on pushes to `main` and
-`develop`. The desktop job installs the Tauri 2 Linux prerequisites, pins
-Rust 1.100.0, restores the Cargo registry and build cache, and runs formatting
-and Clippy checks against the committed lockfile. It uses `cargo clippy`
+`develop`. The desktop job installs the Tauri 2 Linux prerequisites (on
+Linux), pins Rust 1.100.0, restores the Cargo registry and build cache, and
+runs formatting and Clippy checks against the committed lockfile, with Clippy
+warnings failing the job. It uses `cargo clippy`
 rather than a full Tauri bundle build: Clippy compiles all Rust targets while
 avoiding the unrelated Angular build and installer packaging work.
 
@@ -299,13 +300,14 @@ To run the desktop checks locally from the repository root:
 
 ```bash
 cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml --check
-cargo clippy --locked --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets
+cargo clippy --locked --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets -- -D warnings
 ```
 
-The Rust CI job runs on Ubuntu for pull requests and pushes to `main` and
-`develop`. Its Cargo cache includes the registry, Git dependencies and the
-desktop `target/` directory; the cache key is tied to the pinned toolchain and
-`Cargo.lock`.
+The Rust CI job runs on Ubuntu and macOS for pull requests and pushes to
+`main` and `develop`. The macOS leg is the only place the macOS-only code
+(`corners.rs` and its `objc2` dependency) is compiled. Its Cargo cache includes the registry, Git dependencies and the
+desktop `target/` directory; the cache key is tied to the runner OS, the
+pinned toolchain and `Cargo.lock`.
 
 Two suites, split by filename:
 

@@ -100,14 +100,21 @@ jobs:
         run: npm run test:e2e -w @glassbeetle/api
 
   desktop-rust:
-    name: Desktop Rust (fmt & clippy)
-    runs-on: ubuntu-latest
+    name: Desktop Rust (fmt & clippy, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # The window corner code in corners.rs and its objc2 dependency are
+        # compiled only on macOS, so a Linux-only run never type-checks them.
+        os: [ubuntu-latest, macos-latest]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
 
       - name: Install Tauri Linux dependencies
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install --yes \
@@ -141,4 +148,4 @@ jobs:
         run: cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml --check
 
       - name: Compile and lint desktop shell
-        run: cargo clippy --locked --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets
+        run: cargo clippy --locked --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets -- -D warnings
