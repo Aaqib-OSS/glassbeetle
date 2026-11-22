@@ -1,11 +1,14 @@
 import {
   BadRequestException,
   ConflictException,
+  GoneException,
   HttpException,
   HttpStatus,
   NotFoundException,
 } from '@nestjs/common';
+import { PassThrough, Readable } from 'node:stream';
 import { Test, TestingModule } from '@nestjs/testing';
+import type { Request, Response } from 'express';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { BackupsController } from './backups.controller.js';
 import { BackupsService } from './backups.service.js';
@@ -37,11 +40,19 @@ describe('BackupsController', () => {
   };
 
   beforeEach(async () => {
+    const mockArchiveStreamInfo = {
+      id: mockBackupResponse.id,
+      createdAt: mockBackupResponse.createdAt,
+      sizeBytes: mockBackupResponse.sizeBytes,
+      openStream: vi.fn(() => Readable.from(Buffer.from('test archive bytes'))),
+    };
+
     const mockBackupsService = {
       createBackup: vi.fn().mockResolvedValue(mockBackupResponse),
       findAll: vi.fn().mockResolvedValue(mockPaginatedResponse),
       findOne: vi.fn().mockResolvedValue(mockBackupResponse),
       deleteBackup: vi.fn().mockResolvedValue(undefined),
+      getBackupArchive: vi.fn().mockResolvedValue(mockArchiveStreamInfo),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -182,6 +193,188 @@ describe('BackupsController', () => {
       await expect(
         controller.remove('018f3a9e-0000-7000-8000-000000000999'),
       ).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('GET /application/backups/:backupId/download', () => {
+    function createMockExpressResponse() {
+      const headers: Record<string, string> = {};
+      const res: any = new PassThrough();
+      res.headersSent = false;
+      res.statusCode = 200;
+
+      const originalDestroy = res.destroy.bind(res);
+      let destroyed = false;
+      let destroyError: unknown = null;
+      res.destroy = vi.fn((err?: unknown) => {
+        destroyed = true;
+        destroyError = err;
+        return originalDestroy(err as any);
+      });
+
+      res.setHeader = vi.fn((key: string, value: string) => {
+        headers[key.toLowerCase()] = String(value);
+      });
+      res.status = vi.fn((code: number) => {
+        res.statusCode = code;
+        return res;
+      });
+      res.socket = {
+        setTimeout: vi.fn(),
+      };
+
+      return {
+        res,
+        getHeaders: () => headers,
+        getStatusCode: () => res.statusCode,
+        isEnded: () => res.writableEnded,
+        isDestroyed: () => destroyed,
+        getDestroyError: () => destroyError,
+      };
+    }
+
+    it('streams full archive with 200, Content-Type, Content-Length, and attachment disposition', async () => {
+      const mockReq: Partial<Request> = {
+        headers: {},
+        socket: { setTimeout: vi.fn() } as any,
+      };
+      const mock = createMockExpressResponse();
+
+      await controller.download(
+        mockBackupResponse.id,
+        mockReq as Request,
+        mock.res as Response,
+      );
+
+      expect(service.getBackupArchive).toHaveBeenCalledWith(
+        mockBackupResponse.id,
+      );
+      expect(mock.getStatusCode()).toBe(200);
+      expect(mock.getHeaders()['content-type']).toBe('application/gzip');
+      expect(mock.getHeaders()['content-length']).toBe(
+        String(mockBackupResponse.sizeBytes),
+      );
+      expect(mock.getHeaders()['accept-ranges']).toBe('bytes');
+      expect(mock.getHeaders()['content-disposition']).toBe(
+        'attachment; filename="glassbeetle-backup-2026-11-15T21-44-41.000Z.tar.gz"',
+      );
+      expect(mock.getHeaders()['x-content-type-options']).toBe('nosniff');
+    });
+
+    it('supports Range requests with 206 Partial Content', async () => {
+      const mockReq: Partial<Request> = {
+        headers: { range: 'bytes=0-499' },
+        socket: { setTimeout: vi.fn() } as any,
+      };
+      const mock = createMockExpressResponse();
+
+      await controller.download(
+        mockBackupResponse.id,
+        mockReq as Request,
+        mock.res as Response,
+      );
+
+      expect(mock.getStatusCode()).toBe(206);
+      expect(mock.getHeaders()['content-range']).toBe(
+        `bytes 0-499/${mockBackupResponse.sizeBytes}`,
+      );
+      expect(mock.getHeaders()['content-length']).toBe('500');
+    });
+
+    it('returns 416 Range Not Satisfiable when range exceeds archive size', async () => {
+      const mockReq: Partial<Request> = {
+        headers: { range: 'bytes=9999999-99999999' },
+        socket: { setTimeout: vi.fn() } as any,
+      };
+      const mock = createMockExpressResponse();
+
+      await controller.download(
+        mockBackupResponse.id,
+        mockReq as Request,
+        mock.res as Response,
+      );
+
+      expect(mock.getStatusCode()).toBe(HttpStatus.REQUESTED_RANGE_NOT_SATISFIABLE);
+      expect(mock.getHeaders()['content-range']).toBe(
+        `bytes */${mockBackupResponse.sizeBytes}`,
+      );
+      expect(mock.isEnded()).toBe(true);
+    });
+
+    it('propagates NotFoundException (404) when backup does not exist', async () => {
+      vi.spyOn(service, 'getBackupArchive').mockRejectedValueOnce(
+        new NotFoundException({
+          code: 'BACKUP_NOT_FOUND',
+          message: 'No backup found with that ID',
+        }),
+      );
+
+      const mockReq: Partial<Request> = { headers: {} };
+      const mock = createMockExpressResponse();
+
+      await expect(
+        controller.download(
+          '018f3a9e-0000-7000-8000-000000000999',
+          mockReq as Request,
+          mock.res as Response,
+        ),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('propagates GoneException (410) when archive file is missing from disk', async () => {
+      vi.spyOn(service, 'getBackupArchive').mockRejectedValueOnce(
+        new GoneException({
+          code: 'BACKUP_ARCHIVE_GONE',
+          message: 'Backup archive file is missing from disk',
+        }),
+      );
+
+      const mockReq: Partial<Request> = { headers: {} };
+      const mock = createMockExpressResponse();
+
+      await expect(
+        controller.download(
+          mockBackupResponse.id,
+          mockReq as Request,
+          mock.res as Response,
+        ),
+      ).rejects.toThrow(GoneException);
+    });
+
+    it('destroys connection on stream error after headers are sent', async () => {
+      const failingStream = new Readable({
+        read() {
+          // Push a chunk to simulate started stream
+          this.push('chunk 1');
+          // Then emit error
+          process.nextTick(() => {
+            this.emit('error', new Error('Simulated read failure mid-stream'));
+          });
+        },
+      });
+
+      vi.spyOn(service, 'getBackupArchive').mockResolvedValueOnce({
+        id: mockBackupResponse.id,
+        createdAt: mockBackupResponse.createdAt,
+        sizeBytes: 1000,
+        openStream: () => failingStream as any,
+      });
+
+      const mockReq: Partial<Request> = {
+        headers: {},
+        socket: { setTimeout: vi.fn() } as any,
+      };
+      const mock = createMockExpressResponse();
+      // Simulate headers already sent
+      mock.res.headersSent = true;
+
+      await controller.download(
+        mockBackupResponse.id,
+        mockReq as Request,
+        mock.res as Response,
+      );
+
+      expect(mock.isDestroyed()).toBe(true);
     });
   });
 });

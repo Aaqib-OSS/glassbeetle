@@ -1,3 +1,4 @@
+import type fs from 'node:fs';
 import type { BackupTrigger } from './dto/backup-response.dto.js';
 
 /**
@@ -65,4 +66,18 @@ export interface CreateBackupOptions {
   readonly label?: string;
   /** Optional context note */
   readonly note?: string;
+}
+
+/**
+ * Information and stream factory required to download a backup archive.
+ */
+export interface BackupArchiveStreamInfo {
+  /** Unique backup identifier */
+  readonly id: string;
+  /** Creation timestamp in ISO-8601 UTC format */
+  readonly createdAt: string;
+  /** Size of the archive file in bytes, verified by a fresh stat */
+  readonly sizeBytes: number;
+  /** Function opening a readable stream for the archive, optionally scoped to a byte range */
+  readonly openStream: (range?: { start?: number; end?: number }) => fs.ReadStream;
 }
