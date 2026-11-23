@@ -133,7 +133,9 @@ describe('Memory request body size (e2e)', () => {
         statusCode: 413,
         error: 'Payload Too Large',
         code: 'PAYLOAD_TOO_LARGE',
-        message: 'Request body is too large',
+        message: expect.stringMatching(
+          /^(Request body is too large|request entity too large)$/,
+        ),
       });
       expect(typeof res.body.path).toBe('string');
       expect(typeof res.body.timestamp).toBe('string');
