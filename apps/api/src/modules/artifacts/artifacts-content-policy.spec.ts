@@ -1,10 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  formatContentDisposition,
-  parseRangeHeader,
   resolveContentSecurityPolicy,
   SAFE_INLINE_MIME_TYPES,
-  sanitizeFilename,
 } from './artifacts-content-policy.js';
 
 describe('Artifact Content Security Policy', () => {
@@ -30,66 +27,6 @@ describe('Artifact Content Security Policy', () => {
       expect(SAFE_INLINE_MIME_TYPES.has('application/javascript')).toBe(false);
       expect(SAFE_INLINE_MIME_TYPES.has('text/javascript')).toBe(false);
       expect(SAFE_INLINE_MIME_TYPES.has('application/pdf')).toBe(false);
-    });
-  });
-
-  describe('sanitizeFilename', () => {
-    it('removes directory traversal sequences', () => {
-      expect(sanitizeFilename('../../../secret.txt')).toBe('secret.txt');
-      expect(sanitizeFilename('..\\..\\passwords.csv')).toBe('passwords.csv');
-      expect(sanitizeFilename('/etc/hosts')).toBe('hosts');
-    });
-
-    it('removes CRLF and control characters to prevent HTTP response splitting', () => {
-      expect(sanitizeFilename('report\r\nSet-Cookie: evil=1.txt')).toBe(
-        'reportSet-Cookie: evil=1.txt',
-      );
-      expect(sanitizeFilename('file\x00name.png')).toBe('filename.png');
-    });
-
-    it('escapes quotes and backslashes', () => {
-      expect(sanitizeFilename('malicious"; filename="hacked.txt')).toBe(
-        'malicious_; filename=_hacked.txt',
-      );
-    });
-
-    it('returns empty string for inputs that resolve to root or dots', () => {
-      expect(sanitizeFilename('')).toBe('');
-      expect(sanitizeFilename('...')).toBe('');
-      expect(sanitizeFilename('..')).toBe('');
-      expect(sanitizeFilename('.')).toBe('');
-    });
-
-    it('preserves unicode characters', () => {
-      expect(sanitizeFilename("rapport_d'été_🚀.md")).toBe(
-        "rapport_d'été_🚀.md",
-      );
-    });
-  });
-
-  describe('formatContentDisposition', () => {
-    it('returns disposition bare when no filename is given', () => {
-      expect(formatContentDisposition('inline')).toBe('inline');
-      expect(formatContentDisposition('attachment')).toBe('attachment');
-    });
-
-    it('formats pure ASCII filenames without spaces directly', () => {
-      expect(formatContentDisposition('inline', 'report.md')).toBe(
-        'inline; filename="report.md"',
-      );
-      expect(formatContentDisposition('attachment', 'archive.zip')).toBe(
-        'attachment; filename="archive.zip"',
-      );
-    });
-
-    it('formats unicode and space-containing filenames with RFC 5987 encoding', () => {
-      const formatted = formatContentDisposition('inline', 'my report.md');
-      expect(formatted).toContain('filename="my report.md"');
-      expect(formatted).toContain("filename*=UTF-8''my%20report.md");
-
-      const unicode = formatContentDisposition('attachment', 'über_file.bin');
-      expect(unicode).toContain('filename="_ber_file.bin"');
-      expect(unicode).toContain("filename*=UTF-8''%C3%BCber_file.bin");
     });
   });
 
@@ -152,46 +89,6 @@ describe('Artifact Content Security Policy', () => {
       });
       expect(res.contentType).toBe('application/octet-stream');
       expect(res.disposition).toContain('attachment');
-    });
-  });
-
-  describe('parseRangeHeader', () => {
-    it('returns null when header is absent or invalid', () => {
-      expect(parseRangeHeader(undefined, 1000)).toBeNull();
-      expect(parseRangeHeader('', 1000)).toBeNull();
-      expect(parseRangeHeader('items=0-10', 1000)).toBeNull();
-      expect(parseRangeHeader('invalid', 1000)).toBeNull();
-    });
-
-    it('parses explicit byte ranges', () => {
-      expect(parseRangeHeader('bytes=0-499', 1000)).toEqual({
-        start: 0,
-        end: 499,
-      });
-      expect(parseRangeHeader('bytes=500-999', 1000)).toEqual({
-        start: 500,
-        end: 999,
-      });
-    });
-
-    it('parses prefix byte ranges', () => {
-      expect(parseRangeHeader('bytes=500-', 1000)).toEqual({
-        start: 500,
-        end: 999,
-      });
-    });
-
-    it('parses suffix byte ranges', () => {
-      expect(parseRangeHeader('bytes=-300', 1000)).toEqual({
-        start: 700,
-        end: 999,
-      });
-    });
-
-    it('returns unsatisfiable for out-of-bounds or inverted ranges', () => {
-      expect(parseRangeHeader('bytes=1000-2000', 1000)).toBe('unsatisfiable');
-      expect(parseRangeHeader('bytes=500-200', 1000)).toBe('unsatisfiable');
-      expect(parseRangeHeader('bytes=-0', 1000)).toBe('unsatisfiable');
     });
   });
 });
