@@ -236,15 +236,49 @@ export class HttpExceptionFilter implements ExceptionFilter {
 /**
  * Recognises body-parser's error for a body over the size limit.
  *
- * Matched on its documented `type`, since `PayloadTooLargeError` is not
- * exported by body-parser.
+ * In older NestJS versions, body-parser's error was passed directly with
+ * `type: 'entity.too.large'`. In NestJS 12.5+, Nest wraps or represents it as a
+ * `PayloadTooLargeException` with message `'request entity too large'` or
+ * carries `type: 'entity.too.large'` on `cause`.
  */
 function isPayloadTooLargeError(exception: unknown): boolean {
-  return (
-    typeof exception === 'object' &&
-    exception !== null &&
-    (exception as { type?: unknown }).type === 'entity.too.large'
-  );
+  if (typeof exception !== 'object' || exception === null) {
+    return false;
+  }
+
+  if ((exception as { type?: unknown }).type === 'entity.too.large') {
+    return true;
+  }
+
+  const cause = (exception as { cause?: unknown }).cause;
+  if (
+    typeof cause === 'object' &&
+    cause !== null &&
+    (cause as { type?: unknown }).type === 'entity.too.large'
+  ) {
+    return true;
+  }
+
+  if (
+    exception instanceof HttpException &&
+    exception.getStatus() === HttpStatus.PAYLOAD_TOO_LARGE
+  ) {
+    if (exception.message === 'request entity too large') {
+      return true;
+    }
+
+    const response = exception.getResponse();
+    if (
+      typeof response === 'object' &&
+      response !== null &&
+      (response as Record<string, unknown>).message ===
+        'request entity too large'
+    ) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 /**
@@ -273,8 +307,5 @@ function toStack(exception: unknown): string | undefined {
  * Recognises an exception representing client cancellation or abort.
  */
 function isCancellation(exception: unknown): boolean {
-  return (
-    exception instanceof ModelAdapterError && exception.isCancellation
-  );
+  return exception instanceof ModelAdapterError && exception.isCancellation;
 }
-

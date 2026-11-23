@@ -4,6 +4,7 @@ import {
   HttpException,
   HttpStatus,
   NotFoundException,
+  PayloadTooLargeException,
 } from '@nestjs/common';
 import type { ApiErrorResponse } from '../../http/api-error.js';
 import { HttpExceptionFilter } from './http-exception.filter.js';
@@ -192,6 +193,47 @@ describe('HttpExceptionFilter', () => {
     expect(warn).toHaveBeenCalledTimes(1);
   });
 
+  it('maps NestJS 12.5+ PayloadTooLargeException wrapping body-parser to a 413 logged as a warning', () => {
+    const { host, captured } = createHost();
+    const error = vi.spyOn(filter['logger'], 'error');
+    const warn = vi.spyOn(filter['logger'], 'warn');
+
+    const nestPayloadTooLarge = new PayloadTooLargeException(
+      'request entity too large',
+    );
+
+    filter.catch(nestPayloadTooLarge, host);
+
+    expect(captured.status).toBe(HttpStatus.PAYLOAD_TOO_LARGE);
+    expect(captured.body).toMatchObject({
+      statusCode: 413,
+      error: 'Payload Too Large',
+      code: 'PAYLOAD_TOO_LARGE',
+      message: 'Request body is too large',
+      path: '/api/v1/agents/abc',
+    });
+    expect(error).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves custom PayloadTooLargeException messages for domain-specific 413 errors', () => {
+    const { host, captured } = createHost();
+    const customTooLarge = new PayloadTooLargeException(
+      'Picture exceeds maximum allowed size of 2 MB',
+    );
+
+    filter.catch(customTooLarge, host);
+
+    expect(captured.status).toBe(HttpStatus.PAYLOAD_TOO_LARGE);
+    expect(captured.body).toMatchObject({
+      statusCode: 413,
+      error: 'Payload Too Large',
+      code: 'PAYLOAD_TOO_LARGE',
+      message: 'Picture exceeds maximum allowed size of 2 MB',
+      path: '/api/v1/agents/abc',
+    });
+  });
+
   it.each([
     ['a thrown string', 'something went wrong'],
     ['a thrown object', { unexpected: true }],
@@ -289,4 +331,3 @@ describe('HttpExceptionFilter', () => {
     expect(String(debugSpy.mock.calls[0]?.[0])).toContain('cancelled');
   });
 });
-
