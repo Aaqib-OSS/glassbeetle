@@ -222,6 +222,15 @@
       "contributions": [
         "infra"
       ]
+    },
+    {
+      "login": "Mukller",
+      "name": "Anton Petnitsky",
+      "avatar_url": "https://avatars.githubusercontent.com/u/168552591?v=4",
+      "profile": "http://antonpetnitsky.com",
+      "contributions": [
+        "code"
+      ]
     }
   ],
   "commitType": "docs",
