@@ -4,7 +4,9 @@ import {
   GoneException,
   HttpException,
   HttpStatus,
+  InternalServerErrorException,
   NotFoundException,
+  UnprocessableEntityException,
 } from '@nestjs/common';
 import { PassThrough, Readable } from 'node:stream';
 import { Test, TestingModule } from '@nestjs/testing';
@@ -17,6 +19,7 @@ import {
   CreateBackupDto,
   ListBackupsQueryDto,
   PaginatedBackupsResponseDto,
+  RestoreBackupResponseDto,
 } from './dto/index.js';
 
 describe('BackupsController', () => {
@@ -39,6 +42,27 @@ describe('BackupsController', () => {
     offset: 0,
   };
 
+  const mockRestoreResponse: RestoreBackupResponseDto = {
+    backupId: mockBackupResponse.id,
+    restoredAt: '2026-11-24T12:00:00.000Z',
+    databaseRestored: true,
+    filesRestored: 5,
+    databaseSchemaVersion: '007_chat_owner_set_null',
+    appVersion: '0.1.0',
+    credentials: {
+      hasCredentials: false,
+      canDecrypt: true,
+      requiresReentry: false,
+      message: 'No provider credentials stored in restored backup.',
+    },
+    requiresCredentialReentry: false,
+    requiresRestart: true,
+    actionsRequired: [
+      'Restart the application to reload running services with the restored state',
+    ],
+    message: 'Backup restored successfully.',
+  };
+
   beforeEach(async () => {
     const mockArchiveStreamInfo = {
       id: mockBackupResponse.id,
@@ -53,6 +77,7 @@ describe('BackupsController', () => {
       findOne: vi.fn().mockResolvedValue(mockBackupResponse),
       deleteBackup: vi.fn().mockResolvedValue(undefined),
       getBackupArchive: vi.fn().mockResolvedValue(mockArchiveStreamInfo),
+      restoreBackup: vi.fn().mockResolvedValue(mockRestoreResponse),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -193,6 +218,100 @@ describe('BackupsController', () => {
       await expect(
         controller.remove('018f3a9e-0000-7000-8000-000000000999'),
       ).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('POST /application/backups/:backupId/restore', () => {
+    it('restores backup with body { confirm: "true" }', async () => {
+      const result = await controller.restore(
+        mockBackupResponse.id,
+        { confirm: 'true' },
+        undefined,
+      );
+
+      expect(service.restoreBackup).toHaveBeenCalledWith(
+        mockBackupResponse.id,
+        { confirm: 'true' },
+      );
+      expect(result).toEqual(mockRestoreResponse);
+    });
+
+    it('restores backup with query { confirm: "true" } when body is omitted', async () => {
+      const result = await controller.restore(
+        mockBackupResponse.id,
+        undefined,
+        { confirm: 'true' },
+      );
+
+      expect(service.restoreBackup).toHaveBeenCalledWith(
+        mockBackupResponse.id,
+        { confirm: 'true' },
+      );
+      expect(result).toEqual(mockRestoreResponse);
+    });
+
+    it('throws BadRequestException (400) when confirmation is missing', async () => {
+      await expect(
+        controller.restore(mockBackupResponse.id, undefined, undefined),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('throws BadRequestException (400) when confirm is not "true"', async () => {
+      await expect(
+        controller.restore(mockBackupResponse.id, { confirm: 'false' as any }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('propagates NotFoundException (404) when backup does not exist or archive missing', async () => {
+      vi.spyOn(service, 'restoreBackup').mockRejectedValueOnce(
+        new NotFoundException({
+          code: 'BACKUP_NOT_FOUND',
+          message: 'No backup found with that ID',
+        }),
+      );
+
+      await expect(
+        controller.restore(mockBackupResponse.id, { confirm: 'true' }),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('propagates ConflictException (409) when schema version is incompatible', async () => {
+      vi.spyOn(service, 'restoreBackup').mockRejectedValueOnce(
+        new ConflictException({
+          code: 'INCOMPATIBLE_SCHEMA_VERSION',
+          message: 'Incompatible schema version',
+        }),
+      );
+
+      await expect(
+        controller.restore(mockBackupResponse.id, { confirm: 'true' }),
+      ).rejects.toThrow(ConflictException);
+    });
+
+    it('propagates UnprocessableEntityException (422) when archive is corrupt', async () => {
+      vi.spyOn(service, 'restoreBackup').mockRejectedValueOnce(
+        new UnprocessableEntityException({
+          code: 'CORRUPT_ARCHIVE',
+          message: 'Archive is corrupt',
+        }),
+      );
+
+      await expect(
+        controller.restore(mockBackupResponse.id, { confirm: 'true' }),
+      ).rejects.toThrow(UnprocessableEntityException);
+    });
+
+    it('propagates InternalServerErrorException (500) when restore fails', async () => {
+      vi.spyOn(service, 'restoreBackup').mockRejectedValueOnce(
+        new InternalServerErrorException({
+          code: 'RESTORE_FAILED',
+          message: 'Restore failed and was rolled back',
+        }),
+      );
+
+      await expect(
+        controller.restore(mockBackupResponse.id, { confirm: 'true' }),
+      ).rejects.toThrow(InternalServerErrorException);
     });
   });
 

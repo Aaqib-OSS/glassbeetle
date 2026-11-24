@@ -6,12 +6,14 @@ import {
   HttpStatus,
   InternalServerErrorException,
   NotFoundException,
+  UnprocessableEntityException,
 } from '@nestjs/common';
 import Database from 'better-sqlite3';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import zlib from 'node:zlib';
 import * as tar from 'tar';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { newId } from '../../../common/persistence/identifiers.js';
@@ -903,6 +905,617 @@ describe('BackupsService', () => {
           created_at: nowIso(),
         }),
       ).toThrow(BadRequestException);
+    });
+  });
+
+  describe('restoreBackup', () => {
+    async function createCustomArchive(
+      archiveFile: string,
+      files: Record<string, string | Buffer>,
+    ) {
+      const tmpStaging = fs.mkdtempSync(
+        path.join(os.tmpdir(), 'test-craft-archive-'),
+      );
+      const fileNames = Object.keys(files);
+      for (const name of fileNames) {
+        const full = path.join(tmpStaging, name);
+        fs.mkdirSync(path.dirname(full), { recursive: true });
+        fs.writeFileSync(full, files[name]);
+      }
+      await tar.create(
+        { gzip: true, file: archiveFile, cwd: tmpStaging },
+        fileNames,
+      );
+      await fs.promises.rm(tmpStaging, { recursive: true, force: true });
+    }
+
+    function createTraversalArchive(
+      archiveFile: string,
+      traversalEntryName: string,
+    ) {
+      const header = Buffer.alloc(512);
+      header.write(traversalEntryName, 0, 100, 'utf8');
+      header.write('0000644\0', 100, 8, 'utf8');
+      header.write('0000000\0', 108, 8, 'utf8');
+      header.write('0000000\0', 116, 8, 'utf8');
+      const content = Buffer.from('malicious payload');
+      const sizeOctal = content.length.toString(8).padStart(11, '0') + ' ';
+      header.write(sizeOctal, 124, 12, 'utf8');
+      const mtimeOctal = Math.floor(Date.now() / 1000).toString(8).padStart(11, '0') + ' ';
+      header.write(mtimeOctal, 136, 12, 'utf8');
+      header.write('        ', 148, 8, 'utf8');
+      header.write('0', 156, 1, 'utf8');
+      header.write('ustar\0', 257, 6, 'utf8');
+      header.write('00', 263, 2, 'utf8');
+
+      let sum = 0;
+      for (let i = 0; i < 512; i++) {
+        sum += header[i];
+      }
+      const chksumOctal = sum.toString(8).padStart(6, '0') + '\0 ';
+      header.write(chksumOctal, 148, 8, 'utf8');
+
+      const padLen = (512 - (content.length % 512)) % 512;
+      const padding = Buffer.alloc(padLen);
+      const endOfArchive = Buffer.alloc(1024);
+
+      const tarBuf = Buffer.concat([header, content, padding, endOfArchive]);
+      const gz = zlib.gzipSync(tarBuf);
+      fs.writeFileSync(archiveFile, gz);
+    }
+
+    it('restores a valid backup and asserts database records and storage files match the archive snapshot', async () => {
+      // 1. Seed initial data
+      const prompt = fixtures.createSystemPrompt({ name: 'Prompt Before Backup' });
+      const provider = fixtures.createProvider({ name: 'Anthropic Before' });
+      const model = fixtures.createModel({
+        provider_id: provider.id,
+        display_name: 'Claude 3.5 Sonnet',
+      });
+      const agent = fixtures.createAgent({
+        name: 'Agent In Backup',
+        system_prompt_id: prompt.id,
+        model_id: model.id,
+      });
+      const chat = fixtures.createChat({ agent_id: agent.id, title: 'Chat In Backup' });
+      fixtures.createMessage({ chat_id: chat.id, content: 'Message in backup' });
+
+      // Seed file storage
+      const avatarContent = Buffer.from('original avatar bytes');
+      const avatarResult = await fileStorageService.write('pictures', avatarContent, {
+        declaredMimeType: 'image/png',
+      });
+
+      // 2. Create the backup
+      const backup = await backupsService.createBackup({
+        trigger: 'manual',
+        label: 'Golden Backup',
+      });
+
+      // 3. Mutate the active application state (add new data and files)
+      const afterPrompt = fixtures.createSystemPrompt({ name: 'Prompt Created After' });
+      const afterAgent = fixtures.createAgent({
+        name: 'Agent Created After',
+        system_prompt_id: afterPrompt.id,
+        model_id: model.id,
+      });
+      const afterFile = await fileStorageService.write(
+        'pictures',
+        Buffer.from('new picture after backup'),
+        { declaredMimeType: 'image/png' },
+      );
+
+      // Verify mutated state exists before restore
+      expect(
+        dbService.get('SELECT id FROM agents WHERE id = ?', [afterAgent.id]),
+      ).toBeDefined();
+      expect(fs.existsSync(path.join(testStorageDir, afterFile.reference))).toBe(true);
+
+      // 4. Perform restore
+      const outcome = await backupsService.restoreBackup(backup.id, {
+        confirm: 'true',
+      });
+
+      // Assert outcome response
+      expect(outcome.backupId).toBe(backup.id);
+      expect(outcome.databaseRestored).toBe(true);
+      expect(outcome.filesRestored).toBe(1);
+      expect(outcome.requiresRestart).toBe(true);
+      expect(outcome.credentials.hasCredentials).toBe(false);
+
+      // 5. Assert database records match the restored snapshot
+      expect(
+        dbService.get('SELECT id, name FROM agents WHERE id = ?', [agent.id]),
+      ).toEqual({
+        id: agent.id,
+        name: 'Agent In Backup',
+      });
+      expect(
+        dbService.get('SELECT id FROM chats WHERE id = ?', [chat.id]),
+      ).toBeDefined();
+
+      // Assert data created AFTER the backup has been destroyed
+      expect(
+        dbService.get('SELECT id FROM agents WHERE id = ?', [afterAgent.id]),
+      ).toBeUndefined();
+
+      // 6. Assert file storage matches restored snapshot
+      expect(
+        fs.existsSync(path.join(testStorageDir, avatarResult.reference)),
+      ).toBe(true);
+      const readAvatar = fs.readFileSync(
+        path.join(testStorageDir, avatarResult.reference),
+      );
+      expect(readAvatar).toEqual(avatarContent);
+
+      // Assert files created after backup are gone
+      expect(
+        fs.existsSync(path.join(testStorageDir, afterFile.reference)),
+      ).toBe(false);
+
+      // 7. Assert application remains fully functional and queryable
+      expect(dbService.isOpen).toBe(true);
+      const newPrompt = fixtures.createSystemPrompt({ name: 'Post-Restore Prompt' });
+      expect(
+        dbService.get('SELECT name FROM system_prompts WHERE id = ?', [newPrompt.id]),
+      ).toEqual({ name: 'Post-Restore Prompt' });
+    });
+
+    it('refuses restore without explicit confirmation and leaves application state untouched', async () => {
+      const prompt = fixtures.createSystemPrompt({ name: 'Unconfirmed Prompt' });
+      const backup = await backupsService.createBackup({ trigger: 'manual' });
+
+      // Call without confirm
+      await expect(
+        backupsService.restoreBackup(backup.id, {}),
+      ).rejects.toThrow(BadRequestException);
+
+      // Call with confirm='false'
+      await expect(
+        backupsService.restoreBackup(backup.id, { confirm: 'false' }),
+      ).rejects.toThrow(BadRequestException);
+
+      // Assert state untouched
+      expect(
+        dbService.get('SELECT name FROM system_prompts WHERE id = ?', [prompt.id]),
+      ).toBeDefined();
+    });
+
+    it('returns 404 NotFoundException when backup row does not exist', async () => {
+      await expect(
+        backupsService.restoreBackup('018f3a9e-0000-7000-8000-000000000999', {
+          confirm: 'true',
+        }),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('returns 404 NotFoundException when backup row exists but physical archive is missing', async () => {
+      const backup = await backupsService.createBackup({ trigger: 'manual' });
+      const row = dbService.get<{ file_path: string }>(
+        'SELECT file_path FROM backups WHERE id = ?',
+        [backup.id],
+      );
+      const targetDir = (backupsService as any).resolveTargetDirectory();
+      const archivePath = path.join(targetDir, row!.file_path);
+      fs.unlinkSync(archivePath);
+
+      await expect(
+        backupsService.restoreBackup(backup.id, { confirm: 'true' }),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('refuses archive with newer or incompatible schema version with 409 Conflict, leaving state untouched', async () => {
+      const prompt = fixtures.createSystemPrompt({ name: 'Schema Test Prompt' });
+      const id = newId();
+      const targetDir = (backupsService as any).resolveTargetDirectory();
+      const archiveFile = path.join(targetDir, `backup-${id}.tar.gz`);
+
+      const dbSnapshotPath = path.join(tempBaseDir, 'test-incompat-db.sqlite');
+      dbService.db.prepare('VACUUM INTO ?').run(dbSnapshotPath);
+
+      const manifest: BackupManifest = {
+        formatVersion: 1,
+        createdAt: nowIso(),
+        appVersion: '0.1.0',
+        databaseSchemaVersion: '999_future_migration',
+        fileInventory: [],
+      };
+
+      await createCustomArchive(archiveFile, {
+        'manifest.json': JSON.stringify(manifest),
+        'database.sqlite': fs.readFileSync(dbSnapshotPath),
+      });
+
+      dbService.run(
+        `INSERT INTO backups (id, file_path, size_bytes, trigger, created_at)
+         VALUES (?, ?, 100, 'manual', ?)`,
+        [id, `backup-${id}.tar.gz`, nowIso()],
+      );
+
+      await expect(
+        backupsService.restoreBackup(id, { confirm: 'true' }),
+      ).rejects.toThrow(ConflictException);
+
+      // Assert application state untouched
+      expect(
+        dbService.get('SELECT name FROM system_prompts WHERE id = ?', [prompt.id]),
+      ).toBeDefined();
+    });
+
+    it('refuses corrupt archive with 422 Unprocessable Entity, leaving state untouched', async () => {
+      const prompt = fixtures.createSystemPrompt({ name: 'Corrupt Test Prompt' });
+      const id = newId();
+      const targetDir = (backupsService as any).resolveTargetDirectory();
+      const archiveFile = path.join(targetDir, `backup-${id}.tar.gz`);
+
+      // Write random garbage bytes
+      fs.writeFileSync(archiveFile, Buffer.from('not a valid gzip tar archive at all'));
+
+      dbService.run(
+        `INSERT INTO backups (id, file_path, size_bytes, trigger, created_at)
+         VALUES (?, ?, 100, 'manual', ?)`,
+        [id, `backup-${id}.tar.gz`, nowIso()],
+      );
+
+      await expect(
+        backupsService.restoreBackup(id, { confirm: 'true' }),
+      ).rejects.toThrow(UnprocessableEntityException);
+
+      expect(
+        dbService.get('SELECT name FROM system_prompts WHERE id = ?', [prompt.id]),
+      ).toBeDefined();
+    });
+
+    it('refuses archive with path traversal entry (../evil.txt) with 422, and never writes outside storage', async () => {
+      const prompt = fixtures.createSystemPrompt({ name: 'Traversal Test Prompt' });
+      const id = newId();
+      const targetDir = (backupsService as any).resolveTargetDirectory();
+      const archiveFile = path.join(targetDir, `backup-${id}.tar.gz`);
+
+      const escapedFile = path.join(tempBaseDir, 'evil.txt');
+      if (fs.existsSync(escapedFile)) {
+        fs.unlinkSync(escapedFile);
+      }
+
+      await createTraversalArchive(archiveFile, '../evil.txt');
+
+      dbService.run(
+        `INSERT INTO backups (id, file_path, size_bytes, trigger, created_at)
+         VALUES (?, ?, 100, 'manual', ?)`,
+        [id, `backup-${id}.tar.gz`, nowIso()],
+      );
+
+      await expect(
+        backupsService.restoreBackup(id, { confirm: 'true' }),
+      ).rejects.toThrow(UnprocessableEntityException);
+
+      // Assert traversal did NOT create file outside
+      expect(fs.existsSync(escapedFile)).toBe(false);
+
+      // Assert state untouched
+      expect(
+        dbService.get('SELECT name FROM system_prompts WHERE id = ?', [prompt.id]),
+      ).toBeDefined();
+    });
+
+    it('refuses archive with missing manifest.json with 422 Unprocessable Entity', async () => {
+      const id = newId();
+      const targetDir = (backupsService as any).resolveTargetDirectory();
+      const archiveFile = path.join(targetDir, `backup-${id}.tar.gz`);
+
+      const dbSnapshotPath = path.join(tempBaseDir, 'no-manifest-db.sqlite');
+      dbService.db.prepare('VACUUM INTO ?').run(dbSnapshotPath);
+
+      await createCustomArchive(archiveFile, {
+        'database.sqlite': fs.readFileSync(dbSnapshotPath),
+      });
+
+      dbService.run(
+        `INSERT INTO backups (id, file_path, size_bytes, trigger, created_at)
+         VALUES (?, ?, 100, 'manual', ?)`,
+        [id, `backup-${id}.tar.gz`, nowIso()],
+      );
+
+      await expect(
+        backupsService.restoreBackup(id, { confirm: 'true' }),
+      ).rejects.toThrow(UnprocessableEntityException);
+    });
+
+    it('refuses archive whose database fails integrity_check with 422 Unprocessable Entity', async () => {
+      const id = newId();
+      const targetDir = (backupsService as any).resolveTargetDirectory();
+      const archiveFile = path.join(targetDir, `backup-${id}.tar.gz`);
+
+      const currentSchema = (backupsService as any).getDatabaseSchemaVersion();
+      const manifest: BackupManifest = {
+        formatVersion: 1,
+        createdAt: nowIso(),
+        appVersion: '0.1.0',
+        databaseSchemaVersion: currentSchema,
+        fileInventory: [],
+      };
+
+      await createCustomArchive(archiveFile, {
+        'manifest.json': JSON.stringify(manifest),
+        'database.sqlite': Buffer.from('SQLite format 3\0corrupted data here'),
+      });
+
+      dbService.run(
+        `INSERT INTO backups (id, file_path, size_bytes, trigger, created_at)
+         VALUES (?, ?, 100, 'manual', ?)`,
+        [id, `backup-${id}.tar.gz`, nowIso()],
+      );
+
+      await expect(
+        backupsService.restoreBackup(id, { confirm: 'true' }),
+      ).rejects.toThrow(UnprocessableEntityException);
+    });
+
+    it('refuses archive with missing core database tables with 422 Unprocessable Entity', async () => {
+      const id = newId();
+      const targetDir = (backupsService as any).resolveTargetDirectory();
+      const archiveFile = path.join(targetDir, `backup-${id}.tar.gz`);
+
+      // Create a valid SQLite db with an unrelated table
+      const emptyDbPath = path.join(tempBaseDir, 'unrelated.sqlite');
+      const emptyDb = new Database(emptyDbPath);
+      emptyDb.exec('CREATE TABLE some_random_table (id TEXT PRIMARY KEY);');
+      emptyDb.close();
+
+      const currentSchema = (backupsService as any).getDatabaseSchemaVersion();
+      const manifest: BackupManifest = {
+        formatVersion: 1,
+        createdAt: nowIso(),
+        appVersion: '0.1.0',
+        databaseSchemaVersion: currentSchema,
+        fileInventory: [],
+      };
+
+      await createCustomArchive(archiveFile, {
+        'manifest.json': JSON.stringify(manifest),
+        'database.sqlite': fs.readFileSync(emptyDbPath),
+      });
+
+      dbService.run(
+        `INSERT INTO backups (id, file_path, size_bytes, trigger, created_at)
+         VALUES (?, ?, 100, 'manual', ?)`,
+        [id, `backup-${id}.tar.gz`, nowIso()],
+      );
+
+      await expect(
+        backupsService.restoreBackup(id, { confirm: 'true' }),
+      ).rejects.toThrow(UnprocessableEntityException);
+    });
+
+    it('refuses archive with mismatched inventory file checksum with 422 Unprocessable Entity', async () => {
+      const id = newId();
+      const targetDir = (backupsService as any).resolveTargetDirectory();
+      const archiveFile = path.join(targetDir, `backup-${id}.tar.gz`);
+
+      const dbSnapshotPath = path.join(tempBaseDir, 'checksum-test-db.sqlite');
+      dbService.db.prepare('VACUUM INTO ?').run(dbSnapshotPath);
+
+      const currentSchema = (backupsService as any).getDatabaseSchemaVersion();
+      const manifest: BackupManifest = {
+        formatVersion: 1,
+        createdAt: nowIso(),
+        appVersion: '0.1.0',
+        databaseSchemaVersion: currentSchema,
+        fileInventory: [
+          {
+            path: 'files/test.txt',
+            sizeBytes: 11,
+            sha256: 'deadbeef00000000000000000000000000000000000000000000000000000000',
+          },
+        ],
+      };
+
+      await createCustomArchive(archiveFile, {
+        'manifest.json': JSON.stringify(manifest),
+        'database.sqlite': fs.readFileSync(dbSnapshotPath),
+        'files/test.txt': Buffer.from('hello world'),
+      });
+
+      dbService.run(
+        `INSERT INTO backups (id, file_path, size_bytes, trigger, created_at)
+         VALUES (?, ?, 100, 'manual', ?)`,
+        [id, `backup-${id}.tar.gz`, nowIso()],
+      );
+
+      await expect(
+        backupsService.restoreBackup(id, { confirm: 'true' }),
+      ).rejects.toThrow(UnprocessableEntityException);
+    });
+
+    it('rolls back and leaves pre-restore state intact on simulated failure after validation', async () => {
+      const originalPrompt = fixtures.createSystemPrompt({ name: 'Original Pre-Restore Prompt' });
+      const backup = await backupsService.createBackup({ trigger: 'manual' });
+
+      // Add data after backup
+      const mutatedPrompt = fixtures.createSystemPrompt({ name: 'Mutated State Prompt' });
+
+      await expect(
+        backupsService.restoreBackup(backup.id, {
+          confirm: 'true',
+          _simulateFailureAt: 'after-validation',
+        }),
+      ).rejects.toThrow(InternalServerErrorException);
+
+      // Assert pre-restore state remained completely intact
+      expect(
+        dbService.get('SELECT name FROM system_prompts WHERE id = ?', [mutatedPrompt.id]),
+      ).toBeDefined();
+      expect(
+        dbService.get('SELECT name FROM system_prompts WHERE id = ?', [originalPrompt.id]),
+      ).toBeDefined();
+      expect(dbService.isOpen).toBe(true);
+    });
+
+    it('rolls back database and leaves pre-restore state intact on simulated failure mid-database-replacement', async () => {
+      const originalPrompt = fixtures.createSystemPrompt({ name: 'Original Pre-Restore Prompt' });
+      const backup = await backupsService.createBackup({ trigger: 'manual' });
+
+      // Mutate state
+      const mutatedPrompt = fixtures.createSystemPrompt({ name: 'Mutated State Prompt' });
+
+      await expect(
+        backupsService.restoreBackup(backup.id, {
+          confirm: 'true',
+          _simulateFailureAt: 'mid-database-replacement',
+        }),
+      ).rejects.toThrow(InternalServerErrorException);
+
+      // Assert rollback reconnected and restored the mutated active state
+      expect(dbService.isOpen).toBe(true);
+      expect(
+        dbService.get('SELECT name FROM system_prompts WHERE id = ?', [mutatedPrompt.id]),
+      ).toBeDefined();
+      expect(
+        dbService.get('SELECT name FROM system_prompts WHERE id = ?', [originalPrompt.id]),
+      ).toBeDefined();
+    });
+
+    it('rolls back database and file storage to pre-restore state on simulated failure mid-file-replacement', async () => {
+      const originalPrompt = fixtures.createSystemPrompt({ name: 'Original Pre-Restore Prompt' });
+      const backup = await backupsService.createBackup({ trigger: 'manual' });
+
+      // Mutate database and storage state
+      const mutatedPrompt = fixtures.createSystemPrompt({ name: 'Mutated State Prompt' });
+      const mutatedFile = await fileStorageService.write(
+        'pictures',
+        Buffer.from('mutated file content'),
+        { declaredMimeType: 'image/png' },
+      );
+
+      await expect(
+        backupsService.restoreBackup(backup.id, {
+          confirm: 'true',
+          _simulateFailureAt: 'mid-file-replacement',
+        }),
+      ).rejects.toThrow(InternalServerErrorException);
+
+      // Assert rollback restored database
+      expect(dbService.isOpen).toBe(true);
+      expect(
+        dbService.get('SELECT name FROM system_prompts WHERE id = ?', [mutatedPrompt.id]),
+      ).toBeDefined();
+      expect(
+        dbService.get('SELECT name FROM system_prompts WHERE id = ?', [originalPrompt.id]),
+      ).toBeDefined();
+
+      // Assert rollback restored file storage
+      expect(
+        fs.existsSync(path.join(testStorageDir, mutatedFile.reference)),
+      ).toBe(true);
+    });
+
+    it('reports credential situation when provider credentials cannot be decrypted', async () => {
+      // Mock an encryption service that throws DecryptionError on decrypt
+      const mockEncryptionService = {
+        decrypt: vi.fn().mockImplementation(() => {
+          throw new Error('Decryption failed: bad master key');
+        }),
+      } as any;
+
+      const mockConfigWithDir = {
+        dataDir: testDataDir,
+        databasePath: path.join(testDataDir, 'test.db'),
+      } as AppConfigService;
+
+      const serviceWithMockCrypto = new BackupsService(
+        dbService,
+        fileStorageService,
+        mockConfigWithDir,
+        mockEncryptionService,
+      );
+
+      // Insert fake credential into current active db before creating a backup containing credentials
+      const provider = fixtures.createProvider({ name: 'OpenAI Test' });
+      dbService.run(
+        `INSERT INTO provider_credentials (provider_id, encrypted_value, nonce, masked_preview, created_at, updated_at)
+         VALUES (?, ?, ?, 'sk-123***', ?, ?)`,
+        [
+          provider.id,
+          Buffer.from('encrypted ciphertext bytes'),
+          Buffer.from('123456789012'),
+          nowIso(),
+          nowIso(),
+        ],
+      );
+
+      const credBackup = await serviceWithMockCrypto.createBackup({
+        trigger: 'manual',
+      });
+
+      const outcome = await serviceWithMockCrypto.restoreBackup(credBackup.id, {
+        confirm: 'true',
+      });
+
+      expect(outcome.credentials.hasCredentials).toBe(true);
+      expect(outcome.credentials.canDecrypt).toBe(false);
+      expect(outcome.credentials.requiresReentry).toBe(true);
+      expect(outcome.requiresCredentialReentry).toBe(true);
+      expect(outcome.actionsRequired).toContain(
+        'Re-enter provider API keys in Settings > Providers',
+      );
+    });
+
+    it('reports credential situation when provider credentials decrypt successfully', async () => {
+      const provider = fixtures.createProvider({ name: 'Google Test' });
+      dbService.run(
+        `INSERT INTO provider_credentials (provider_id, encrypted_value, nonce, masked_preview, created_at, updated_at)
+         VALUES (?, ?, ?, 'AIza***', ?, ?)`,
+        [
+          provider.id,
+          Buffer.from('encrypted ciphertext bytes'),
+          Buffer.from('123456789012'),
+          nowIso(),
+          nowIso(),
+        ],
+      );
+
+      const mockEncryptionService = {
+        decrypt: vi.fn().mockReturnValue('decrypted-api-key-plaintext'),
+      } as any;
+
+      const mockConfigWithDir = {
+        dataDir: testDataDir,
+        databasePath: path.join(testDataDir, 'test.db'),
+      } as AppConfigService;
+
+      const serviceWithCrypto = new BackupsService(
+        dbService,
+        fileStorageService,
+        mockConfigWithDir,
+        mockEncryptionService,
+      );
+
+      const credBackup = await serviceWithCrypto.createBackup({
+        trigger: 'manual',
+      });
+
+      const outcome = await serviceWithCrypto.restoreBackup(credBackup.id, {
+        confirm: 'true',
+      });
+
+      expect(outcome.credentials.hasCredentials).toBe(true);
+      expect(outcome.credentials.canDecrypt).toBe(true);
+      expect(outcome.credentials.requiresReentry).toBe(false);
+      expect(outcome.requiresCredentialReentry).toBe(false);
+      expect(outcome.actionsRequired).not.toContain(
+        'Re-enter provider API keys in Settings > Providers',
+      );
+    });
+
+    it('refuses restore with 409 Conflict when another backup or restore is in progress', async () => {
+      const backup = await backupsService.createBackup({ trigger: 'manual' });
+      (backupsService as any).isBackupInProgress = true;
+
+      await expect(
+        backupsService.restoreBackup(backup.id, { confirm: 'true' }),
+      ).rejects.toThrow(ConflictException);
+
+      (backupsService as any).isBackupInProgress = false;
     });
   });
 });
