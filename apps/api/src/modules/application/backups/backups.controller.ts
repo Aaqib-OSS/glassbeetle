@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -39,6 +40,9 @@ import {
   CreateBackupDto,
   ListBackupsQueryDto,
   PaginatedBackupsResponseDto,
+  RestoreBackupDto,
+  RestoreBackupQueryDto,
+  RestoreBackupResponseDto,
 } from './dto/index.js';
 
 /**
@@ -350,6 +354,99 @@ Status codes:
       });
 
       stream.pipe(res);
+    });
+  }
+
+  /**
+   * `POST /application/backups/:backupId/restore` — restore application from a backup archive.
+   *
+   * Validates archive integrity, takes a consistent safety snapshot, closes the active
+   * database connection, replaces the database and file storage tree, and reopens the database.
+   */
+  @Post(':backupId/restore')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Restore application from a backup archive',
+    description: `Restores the application to the state captured in the specified backup archive.
+
+### Destructive Operation (What Restore Destroys)
+Restoring from a backup permanently and irreversibly destroys and replaces current data:
+1. **SQLite Database**: The active database (\`glassbeetle.db\`) is completely replaced by the snapshot in the archive. Any chats, messages, agents, teams, projects, user profiles, memories, and budget tracking created or modified since the backup was taken are permanently lost.
+2. **File Storage Tree**: The active file storage directory (\`storage/\`) is replaced with the files in the archive. Any agent pictures, project images, or artifact files created since the backup was taken are deleted.
+3. **Provider Credentials**: Backup archives intentionally exclude \`master.key\`. If restored on a different machine or without the original master key, stored provider API keys cannot be decrypted and must be re-entered.
+
+### Fate of Newer Backups
+The SQLite \`backups\` table is restored along with the rest of the database. Backups created after the restored snapshot date will no longer appear in the API listing (\`GET /application/backups\`). Their physical archive files on disk are intentionally preserved in the backup directory to prevent data loss.
+
+### Safety Snapshot & Rollback
+To ensure safety in the event of an unexpected crash or filesystem error during replacement:
+- Complete validation (row existence, archive integrity, manifest parsing, schema version compatibility, SQLite integrity check) runs strictly **before** any destructive action.
+- A consistent safety snapshot of the active database (\`VACUUM INTO\`) and file storage tree is taken before file replacement begins.
+- If replacement fails, the database and storage trees are automatically rolled back to the safety snapshot, leaving the pre-restore state intact.
+
+### Concurrency & In-Flight Operations
+Restoring while the application is actively serving requests is inherently disruptive. Backup and restore operations are mutually exclusive (\`409 Conflict\`). In-flight chat completions attempting to write during the brief replacement window will fail gracefully, and any stranded messages are swept to \`error\` status on reconnect.
+
+### Confirmation Requirement
+Explicit confirmation is mandatory. Supply \`?confirm=true\` as a query parameter or pass \`{ "confirm": "true" }\` in the request body.`,
+  })
+  @ApiParam({
+    name: 'backupId',
+    description: 'Unique backup identifier (UUIDv7)',
+    example: '018f3a9e-0000-7000-8000-000000000001',
+  })
+  @ApiBody({
+    type: RestoreBackupDto,
+    required: false,
+    description:
+      'Confirmation body payload. Alternatively, supply `?confirm=true` query parameter.',
+  })
+  @ApiOkResponse({
+    description: 'Restore completed successfully',
+    type: RestoreBackupResponseDto,
+  })
+  @ApiBadRequestResponse({
+    description:
+      'backupId is invalid, confirmation is missing or invalid, or unexpected body fields',
+    type: ApiErrorResponseDto,
+  })
+  @ApiNotFoundResponse({
+    description:
+      'The backup does not exist in the database, or its archive file is missing from disk',
+    type: ApiErrorResponseDto,
+  })
+  @ApiConflictResponse({
+    description:
+      'The archive is from an incompatible schema version, or a backup/restore is already in progress',
+    type: ApiErrorResponseDto,
+  })
+  @ApiResponse({
+    status: HttpStatus.UNPROCESSABLE_ENTITY,
+    description:
+      'The archive is corrupt, malformed, contains traversal paths, or fails database integrity checks',
+    type: ApiErrorResponseDto,
+  })
+  @ApiInternalServerErrorResponse({
+    description:
+      'Restore failed; the pre-restore state was rolled back and is intact',
+    type: ApiErrorResponseDto,
+  })
+  async restore(
+    @Param('backupId', ParseUuidV7Pipe) backupId: string,
+    @Body() body?: RestoreBackupDto,
+    @Query() query?: RestoreBackupQueryDto,
+  ): Promise<RestoreBackupResponseDto> {
+    const isConfirmed = body?.confirm === 'true' || query?.confirm === 'true';
+    if (!isConfirmed) {
+      throw new BadRequestException({
+        code: 'CONFIRMATION_REQUIRED',
+        message:
+          'Explicit confirmation is required to restore a backup (?confirm=true or { "confirm": "true" })',
+      });
+    }
+
+    return this.backupsService.restoreBackup(backupId, {
+      confirm: 'true',
     });
   }
 

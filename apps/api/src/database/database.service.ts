@@ -49,10 +49,32 @@ export interface RunResult {
 export class DatabaseService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(DatabaseService.name);
   private dbInstance?: Database.Database;
+  private currentDbPath?: string;
 
   constructor(
     @Optional() private readonly appConfigService?: AppConfigService,
   ) {}
+
+  /**
+   * The file path of the currently open (or configured) SQLite database.
+   *
+   * Defaults to ':memory:' if unconfigured or running an in-memory database.
+   */
+  public get databasePath(): string {
+    return (
+      this.currentDbPath ??
+      (this.dbInstance?.name as string | undefined) ??
+      this.appConfigService?.databasePath ??
+      ':memory:'
+    );
+  }
+
+  /**
+   * Reports whether a live SQLite database connection is currently open.
+   */
+  public get isOpen(): boolean {
+    return Boolean(this.dbInstance?.open);
+  }
 
   /**
    * Opens the connection when the module starts, unless one is already open.
@@ -93,17 +115,24 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
    * @throws Error if the JSON1 extension is unavailable, or if a migration
    * fails.
    */
-  public connect(dbPath: string = ':memory:'): void {
+  public connect(dbPath?: string): void {
     if (this.dbInstance) {
       return;
     }
 
-    if (dbPath !== ':memory:' && !dbPath.startsWith('file::memory:')) {
-      const dir = dirname(dbPath);
+    const resolvedPath =
+      dbPath ??
+      this.currentDbPath ??
+      this.appConfigService?.databasePath ??
+      ':memory:';
+    this.currentDbPath = resolvedPath;
+
+    if (resolvedPath !== ':memory:' && !resolvedPath.startsWith('file::memory:')) {
+      const dir = dirname(resolvedPath);
       mkdirSync(dir, { recursive: true });
     }
 
-    this.dbInstance = new Database(dbPath);
+    this.dbInstance = new Database(resolvedPath);
     this.dbInstance.pragma('foreign_keys = ON');
     this.dbInstance.pragma('journal_mode = WAL');
 

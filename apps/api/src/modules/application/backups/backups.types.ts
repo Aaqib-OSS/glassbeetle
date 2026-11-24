@@ -69,6 +69,19 @@ export interface CreateBackupOptions {
 }
 
 /**
+ * Options accepted by `BackupsService.restoreBackup`.
+ */
+export interface RestoreBackupOptions {
+  /** Explicit confirmation parameter. Must be "true" */
+  readonly confirm?: string;
+  /** Internal test hook to simulate failures at specific stages of restore */
+  readonly _simulateFailureAt?:
+    | 'after-validation'
+    | 'mid-database-replacement'
+    | 'mid-file-replacement';
+}
+
+/**
  * Information and stream factory required to download a backup archive.
  */
 export interface BackupArchiveStreamInfo {

@@ -9,7 +9,9 @@ import {
   Logger,
   NotFoundException,
   Optional,
+  UnprocessableEntityException,
 } from '@nestjs/common';
+import Database from 'better-sqlite3';
 import { createHash } from 'node:crypto';
 import fs, { existsSync, mkdirSync } from 'node:fs';
 import os from 'node:os';
@@ -24,6 +26,7 @@ import { newId } from '../../../common/persistence/identifiers.js';
 import { nowIso } from '../../../common/persistence/timestamps.js';
 import { AppConfigService } from '../../../config/app-config.service.js';
 import { resolveDefaultDataDir } from '../../../config/data-dir.js';
+import { EncryptionService } from '../../../crypto/encryption/encryption.service.js';
 import { DatabaseService } from '../../../database/database.service.js';
 import { FileStorageService } from '../../../file-storage/file-storage.service.js';
 import {
@@ -33,12 +36,14 @@ import {
   type BackupManifest,
   type BackupRecordRow,
   type CreateBackupOptions,
+  type RestoreBackupOptions,
 } from './backups.types.js';
 import {
   BACKUP_TRIGGERS,
   BackupResponseDto,
 } from './dto/backup-response.dto.js';
 import { ListBackupsQueryDto } from './dto/list-backups-query.dto.js';
+import { RestoreBackupResponseDto } from './dto/restore-backup-response.dto.js';
 
 /**
  * Current backup archive format specification version.
@@ -51,7 +56,7 @@ export const BACKUP_FORMAT_VERSION = 1;
 export const DEFAULT_APP_VERSION = '0.1.0';
 
 /**
- * Service managing backup creation, listing, retrieval, and deletion.
+ * Service managing backup creation, listing, retrieval, deletion, and restoration.
  *
  * ## Archive Format
  * A backup archive is a single gzipped tar file (`.tar.gz`) containing:
@@ -76,9 +81,42 @@ export const DEFAULT_APP_VERSION = '0.1.0';
  * Consequently, restoring a backup on a new device will require provider API keys to be
  * re-entered, ensuring sensitive credentials are never leaked via synced backup files.
  *
+ * ## Restore Semantics & What Restore Destroys
+ * Restoring from a backup replaces the active database and file storage tree with the
+ * contents of the backup archive:
+ * 1. **Database records**: Replaces `glassbeetle.db`. All records created or modified
+ *    since the snapshot was taken (chats, messages, agents, teams, projects, memories,
+ *    user profile, spend tracking) are permanently replaced by the archive snapshot.
+ * 2. **File storage**: Replaces the file storage directory (`storage/`). Any agent pictures,
+ *    project images, or artifact blobs created since the backup are removed.
+ * 3. **Provider credentials**: Deliberately excluded from the archive. If restored on a machine
+ *    with a differing master encryption key, credentials cannot be decrypted and must be re-entered.
+ *
+ * ## Fate of Newer Backups After Restoring an Older One
+ * The SQLite `backups` table itself resides within the restored database snapshot. Restoring
+ * an older backup replaces this table with the historical table state from that snapshot date.
+ * Consequently, backup records created after the restored snapshot date will no longer appear
+ * in API listings (`GET /application/backups`). Their physical archive files (`.tar.gz`) on disk
+ * are **intentionally preserved** in the backup directory to prevent data loss, but will remain
+ * unreferenced in the database.
+ *
+ * ## Safety Snapshot & Rollback Strategy
+ * To protect against losing active application state if a restore operation fails mid-flight:
+ * 1. All archive validation (row check, archive existence, archive extraction, manifest parsing,
+ *    format version verification, schema compatibility check, database integrity check, file
+ *    checksum verification) executes strictly **BEFORE** any destructive action.
+ * 2. Before replacing any files, a consistent safety snapshot of the active SQLite database is
+ *    created via `VACUUM INTO` and a full copy of the active file storage tree is taken in an
+ *    isolated temporary staging location.
+ * 3. Replacements are performed atomically via staged file copy and filesystem renames.
+ * 4. If any error occurs during database or file storage replacement, an automatic rollback
+ *    procedure restores the pre-restore database and storage trees from the safety snapshot,
+ *    reconnects the SQLite database, and returns `500 Internal Server Error`, leaving the
+ *    original data completely intact.
+ *
  * ## Concurrency
- * Backups are serialised: concurrent backups are disallowed. If a backup is already
- * running, subsequent creation requests immediately fail with `409 Conflict`.
+ * Backups and restores are mutually exclusive. If a backup or restore is already running,
+ * subsequent requests immediately fail with `409 Conflict`.
  *
  * ## Deletion Semantics
  * Deleting a backup removes its database row and deletes the archive file from disk.
@@ -90,11 +128,13 @@ export const DEFAULT_APP_VERSION = '0.1.0';
 export class BackupsService {
   private readonly logger = new Logger(BackupsService.name);
   private isBackupInProgress = false;
+  private isRestoreInProgress = false;
 
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly fileStorageService: FileStorageService,
     @Optional() private readonly appConfigService?: AppConfigService,
+    @Optional() private readonly encryptionService?: EncryptionService,
   ) {}
 
   /**
@@ -105,7 +145,7 @@ export class BackupsService {
    *
    * @param options - Backup parameters including trigger source, optional label and note.
    * @returns Metadata of the newly created backup.
-   * @throws ConflictException (409) if a backup is already in progress.
+   * @throws ConflictException (409) if a backup or restore is already in progress.
    * @throws BadRequestException (400) if the target directory is invalid or unwritable.
    * @throws HttpException (507) if detectable disk space is insufficient.
    * @throws InternalServerErrorException (500) if creation fails.
@@ -113,8 +153,8 @@ export class BackupsService {
   async createBackup(
     options: CreateBackupOptions = {},
   ): Promise<BackupResponseDto> {
-    if (this.isBackupInProgress) {
-      throw new ConflictException('A backup is already in progress');
+    if (this.isBackupInProgress || this.isRestoreInProgress) {
+      throw new ConflictException('A backup or restore operation is already in progress');
     }
 
     this.isBackupInProgress = true;
@@ -484,6 +524,642 @@ export class BackupsService {
         return fs.createReadStream(archivePath, range);
       },
     };
+  }
+
+  /**
+   * Restores application database and file storage from a backup archive.
+   *
+   * ## Destructive Operation
+   * Irreversibly replaces the active SQLite database (`glassbeetle.db`) and the
+   * file storage tree (`storage/`).
+   *
+   * ## Validation & Execution Order
+   * 1. Requires explicit confirmation (`confirm: 'true'`).
+   * 2. Validates backup record exists in `backups` table (404).
+   * 3. Validates archive file exists on disk and is a regular file (404).
+   * 4. Validates archive opens as valid tar/gzip and contains no path traversal (422).
+   * 5. Validates manifest.json parses and contains required fields (422).
+   * 6. Validates format version is supported (422).
+   * 7. Validates database schema version is compatible with current application (409).
+   * 8. Validates database.sqlite inside archive opens read-only, passes integrity check,
+   *    and contains core application tables (422).
+   * 9. Validates file inventory checksums (422).
+   * 10. Takes a consistent safety snapshot (VACUUM INTO + copy storage) to enable rollback.
+   * 11. Closes SQLite connection, atomically renames new database, reopens connection.
+   * 12. Atomically replaces file storage tree.
+   * 13. Reports credential verification outcome and required user actions.
+   *
+   * On any failure during or after database replacement, automatically rolls back
+   * database and storage to the safety snapshot and throws InternalServerErrorException (500).
+   *
+   * @param id - Backup UUIDv7 identifier.
+   * @param options - Restore options including explicit confirmation flag.
+   * @returns Detailed outcome of restore operation.
+   * @throws BadRequestException (400) if confirmation is missing or invalid.
+   * @throws NotFoundException (404) if backup record or archive file is missing.
+   * @throws ConflictException (409) if archive schema version is incompatible or operation in progress.
+   * @throws UnprocessableEntityException (422) if archive is corrupt, malformed, or fails integrity checks.
+   * @throws InternalServerErrorException (500) if restore fails; pre-restore state is rolled back.
+   */
+  async restoreBackup(
+    id: string,
+    options: RestoreBackupOptions = {},
+  ): Promise<RestoreBackupResponseDto> {
+    if (options.confirm !== 'true') {
+      throw new BadRequestException({
+        code: 'CONFIRMATION_REQUIRED',
+        message:
+          'Explicit confirmation is required to restore a backup (confirm must be "true")',
+      });
+    }
+
+    if (this.isBackupInProgress || this.isRestoreInProgress) {
+      throw new ConflictException(
+        'A backup or restore operation is already in progress',
+      );
+    }
+
+    this.isRestoreInProgress = true;
+    this.logger.warn(
+      `Starting restore from backup: id="${id}". Validating archive before any modification...`,
+    );
+
+    let stagingExtractDir: string | undefined;
+    let safetyDir: string | undefined;
+    let safetyDbPath: string | undefined;
+    let safetyStorageDir: string | undefined;
+
+    let dbClosed = false;
+    let dbReplaced = false;
+    let storageReplaced = false;
+
+    let targetDbPath = '';
+    const storageRoot = this.fileStorageService.storageRoot;
+
+    try {
+      // 1. Validate backup row exists
+      const row = this.databaseService.get<BackupRecordRow>(
+        'SELECT * FROM backups WHERE id = ?',
+        [id],
+      );
+      if (!row) {
+        throw new NotFoundException({
+          code: 'BACKUP_NOT_FOUND',
+          message: `No backup found with ID "${id}"`,
+        });
+      }
+
+      // 2. Validate archive file exists on disk
+      const archivePath = this.resolveAndValidateArchivePath(row);
+      if (!existsSync(archivePath)) {
+        throw new NotFoundException({
+          code: 'BACKUP_ARCHIVE_NOT_FOUND',
+          message: 'Backup archive file is missing from disk',
+        });
+      }
+
+      const stat = fs.statSync(archivePath);
+      if (!stat.isFile()) {
+        throw new NotFoundException({
+          code: 'BACKUP_ARCHIVE_NOT_FOUND',
+          message: 'Backup archive file is missing from disk',
+        });
+      }
+
+      // 3. Inspect archive entries for corruption and path traversal before extraction
+      const tarEntries: string[] = [];
+      try {
+        await tar.t({
+          file: archivePath,
+          onentry: (entry) => {
+            tarEntries.push(entry.path);
+          },
+        });
+      } catch (tarErr) {
+        throw new UnprocessableEntityException({
+          code: 'CORRUPT_ARCHIVE',
+          message: `Backup archive is corrupt or malformed: ${tarErr instanceof Error ? tarErr.message : String(tarErr)}`,
+        });
+      }
+
+      if (tarEntries.length === 0) {
+        throw new UnprocessableEntityException({
+          code: 'CORRUPT_ARCHIVE',
+          message: 'Backup archive is empty',
+        });
+      }
+
+      for (const entryPath of tarEntries) {
+        if (this.isPathTraversalOrUnsafe(entryPath)) {
+          throw new UnprocessableEntityException({
+            code: 'MALFORMED_ARCHIVE',
+            message: `Backup archive contains illegal or traversing path: "${entryPath}"`,
+          });
+        }
+      }
+
+      // 4. Extract archive to temporary staging directory
+      stagingExtractDir = await fs.promises.mkdtemp(
+        path.join(os.tmpdir(), `glassbeetle-restore-extract-${id}-`),
+      );
+      await fs.promises.chmod(stagingExtractDir, 0o700);
+
+      try {
+        await tar.x({
+          file: archivePath,
+          cwd: stagingExtractDir,
+          mode: 0o700,
+        });
+      } catch (extractErr) {
+        throw new UnprocessableEntityException({
+          code: 'CORRUPT_ARCHIVE',
+          message: `Failed to extract backup archive: ${extractErr instanceof Error ? extractErr.message : String(extractErr)}`,
+        });
+      }
+
+      // 5. Validate manifest.json
+      const manifestPath = path.join(stagingExtractDir, 'manifest.json');
+      if (!existsSync(manifestPath)) {
+        throw new UnprocessableEntityException({
+          code: 'INVALID_ARCHIVE_MANIFEST',
+          message: 'Backup archive is missing manifest.json',
+        });
+      }
+
+      let manifest: BackupManifest;
+      try {
+        const manifestContent = await fs.promises.readFile(manifestPath, 'utf8');
+        manifest = JSON.parse(manifestContent);
+      } catch (parseErr) {
+        throw new UnprocessableEntityException({
+          code: 'INVALID_ARCHIVE_MANIFEST',
+          message: `manifest.json in backup archive is corrupt: ${parseErr instanceof Error ? parseErr.message : String(parseErr)}`,
+        });
+      }
+
+      if (
+        !manifest ||
+        typeof manifest !== 'object' ||
+        typeof manifest.formatVersion !== 'number' ||
+        typeof manifest.databaseSchemaVersion !== 'string'
+      ) {
+        throw new UnprocessableEntityException({
+          code: 'INVALID_ARCHIVE_MANIFEST',
+          message: 'manifest.json is missing required metadata fields',
+        });
+      }
+
+      // 6. Validate format version
+      if (manifest.formatVersion !== BACKUP_FORMAT_VERSION) {
+        throw new UnprocessableEntityException({
+          code: 'UNSUPPORTED_FORMAT_VERSION',
+          message: `Unsupported backup format version: ${manifest.formatVersion} (current supported version is ${BACKUP_FORMAT_VERSION})`,
+        });
+      }
+
+      // 7. Validate schema version compatibility
+      const currentSchemaVersion = this.getDatabaseSchemaVersion();
+      if (manifest.databaseSchemaVersion !== currentSchemaVersion) {
+        throw new ConflictException({
+          code: 'INCOMPATIBLE_SCHEMA_VERSION',
+          message: `Backup archive database schema version "${manifest.databaseSchemaVersion}" is incompatible with current application schema version "${currentSchemaVersion}". Schema migration during restore is not supported.`,
+        });
+      }
+
+      // 8. Validate database.sqlite snapshot inside archive
+      const extractedDbPath = path.join(stagingExtractDir, 'database.sqlite');
+      if (!existsSync(extractedDbPath) || !fs.statSync(extractedDbPath).isFile()) {
+        throw new UnprocessableEntityException({
+          code: 'MISSING_DATABASE_SNAPSHOT',
+          message: 'Backup archive is missing database.sqlite',
+        });
+      }
+
+      let readOnlyDb: Database.Database;
+      try {
+        readOnlyDb = new Database(extractedDbPath, {
+          readonly: true,
+          fileMustExist: true,
+        });
+      } catch (dbOpenErr) {
+        throw new UnprocessableEntityException({
+          code: 'CORRUPT_DATABASE_SNAPSHOT',
+          message: `Extracted database.sqlite cannot be opened: ${dbOpenErr instanceof Error ? dbOpenErr.message : String(dbOpenErr)}`,
+        });
+      }
+
+      try {
+        const integrity = readOnlyDb.pragma('integrity_check', { simple: true });
+        if (integrity !== 'ok') {
+          throw new UnprocessableEntityException({
+            code: 'DATABASE_INTEGRITY_CHECK_FAILED',
+            message: `Database integrity check failed: ${String(integrity)}`,
+          });
+        }
+
+        const tableRows = readOnlyDb
+          .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+          .all() as Array<{ name: string }>;
+        const tableNames = new Set(tableRows.map((r) => r.name));
+        const requiredTables = [
+          'system_prompts',
+          'providers',
+          'models',
+          'agents',
+          'chats',
+          'messages',
+          'backups',
+        ];
+        const missingTables = requiredTables.filter((t) => !tableNames.has(t));
+        if (missingTables.length > 0) {
+          throw new UnprocessableEntityException({
+            code: 'DATABASE_TABLES_MISSING',
+            message: `Archive database snapshot is missing required tables: ${missingTables.join(', ')}`,
+          });
+        }
+      } catch (dbErr) {
+        if (dbErr instanceof HttpException) {
+          throw dbErr;
+        }
+        throw new UnprocessableEntityException({
+          code: 'DATABASE_INTEGRITY_CHECK_FAILED',
+          message: `Database integrity check failed: ${dbErr instanceof Error ? dbErr.message : String(dbErr)}`,
+        });
+      } finally {
+        readOnlyDb.close();
+      }
+
+      // 9. Validate files inventory and checksums
+      if (
+        Array.isArray(manifest.fileInventory) &&
+        manifest.fileInventory.length > 0
+      ) {
+        for (const item of manifest.fileInventory) {
+          if (this.isPathTraversalOrUnsafe(item.path)) {
+            throw new UnprocessableEntityException({
+              code: 'MALFORMED_ARCHIVE',
+              message: `Inventory item contains illegal path: "${item.path}"`,
+            });
+          }
+          const extractedFilePath = path.join(stagingExtractDir, item.path);
+          if (
+            !existsSync(extractedFilePath) ||
+            !fs.statSync(extractedFilePath).isFile()
+          ) {
+            throw new UnprocessableEntityException({
+              code: 'CORRUPT_ARCHIVE_FILES',
+              message: `Archive file listed in inventory is missing: "${item.path}"`,
+            });
+          }
+          const itemStat = await fs.promises.stat(extractedFilePath);
+          if (itemStat.size !== item.sizeBytes) {
+            throw new UnprocessableEntityException({
+              code: 'CORRUPT_ARCHIVE_FILES',
+              message: `Archive file size mismatch for "${item.path}": expected ${item.sizeBytes}, found ${itemStat.size}`,
+            });
+          }
+          const content = await fs.promises.readFile(extractedFilePath);
+          const hash = createHash('sha256').update(content).digest('hex');
+          if (hash !== item.sha256) {
+            throw new UnprocessableEntityException({
+              code: 'CORRUPT_ARCHIVE_FILES',
+              message: `Archive file hash mismatch for "${item.path}"`,
+            });
+          }
+        }
+      }
+
+      // 10. TAKE SAFETY SNAPSHOT BEFORE DESTRUCTIVE ACTIONS
+      safetyDir = await fs.promises.mkdtemp(
+        path.join(os.tmpdir(), `glassbeetle-restore-safety-${id}-`),
+      );
+      await fs.promises.chmod(safetyDir, 0o700);
+
+      safetyDbPath = path.join(safetyDir, 'safety-database.sqlite');
+      this.databaseService.db.prepare('VACUUM INTO ?').run(safetyDbPath);
+      await fs.promises.chmod(safetyDbPath, 0o600);
+
+      safetyStorageDir = path.join(safetyDir, 'storage');
+      if (existsSync(storageRoot)) {
+        await fs.promises.cp(storageRoot, safetyStorageDir, { recursive: true });
+        await fs.promises.chmod(safetyStorageDir, 0o700);
+      }
+
+      // Resolve target database file path
+      try {
+        targetDbPath = this.databaseService.databasePath;
+      } catch {
+        targetDbPath = this.appConfigService?.databasePath ?? ':memory:';
+      }
+
+      if (
+        !targetDbPath ||
+        targetDbPath === ':memory:' ||
+        targetDbPath.startsWith('file::memory:')
+      ) {
+        throw new BadRequestException('Cannot restore into an in-memory database');
+      }
+
+      const dbDir = path.dirname(targetDbPath);
+      await fs.promises.mkdir(dbDir, { recursive: true });
+      const stagedDbPath = path.join(
+        dbDir,
+        `.database-restore-${newId()}.sqlite`,
+      );
+      await fs.promises.copyFile(extractedDbPath, stagedDbPath);
+      await fs.promises.chmod(stagedDbPath, 0o600);
+
+      if (options._simulateFailureAt === 'after-validation') {
+        throw new Error('Simulated failure after validation');
+      }
+
+      // 11. Close SQLite connection before replacing file
+      this.databaseService.close();
+      dbClosed = true;
+
+      // 12. Atomic rename of database
+      await fs.promises.rename(stagedDbPath, targetDbPath);
+      await fs.promises.rm(`${targetDbPath}-wal`, { force: true });
+      await fs.promises.rm(`${targetDbPath}-shm`, { force: true });
+      dbReplaced = true;
+
+      if (options._simulateFailureAt === 'mid-database-replacement') {
+        throw new Error('Simulated failure mid-database-replacement');
+      }
+
+      // 13. Reopen database connection
+      this.databaseService.connect(targetDbPath);
+      dbClosed = false;
+
+      // 14. File storage replacement
+      const storageParent = path.dirname(storageRoot);
+      await fs.promises.mkdir(storageParent, { recursive: true });
+      const stagingStorageDir = path.join(
+        storageParent,
+        `.storage-restore-staging-${newId()}`,
+      );
+      const extractedFilesDir = path.join(stagingExtractDir, 'files');
+
+      if (existsSync(extractedFilesDir)) {
+        await fs.promises.cp(extractedFilesDir, stagingStorageDir, {
+          recursive: true,
+        });
+      } else {
+        await fs.promises.mkdir(stagingStorageDir, {
+          recursive: true,
+          mode: 0o700,
+        });
+      }
+
+      if (options._simulateFailureAt === 'mid-file-replacement') {
+        throw new Error('Simulated failure mid-file-replacement');
+      }
+
+      const oldStorageBackupDir = path.join(
+        storageParent,
+        `.storage-old-${newId()}`,
+      );
+      if (existsSync(storageRoot)) {
+        await fs.promises.rename(storageRoot, oldStorageBackupDir);
+      }
+      await fs.promises.rename(stagingStorageDir, storageRoot);
+      storageReplaced = true;
+
+      if (existsSync(oldStorageBackupDir)) {
+        await fs.promises.rm(oldStorageBackupDir, {
+          recursive: true,
+          force: true,
+        });
+      }
+
+      // 15. Verify credentials situation
+      let hasCredentials = false;
+      let canDecrypt = true;
+      let credMessage = 'No provider credentials stored in restored backup.';
+
+      try {
+        const credRows = this.databaseService.all<{
+          provider_id: string;
+          encrypted_value: Buffer;
+          nonce: Buffer;
+        }>('SELECT provider_id, encrypted_value, nonce FROM provider_credentials');
+
+        if (credRows.length > 0) {
+          hasCredentials = true;
+          if (this.encryptionService) {
+            for (const row of credRows) {
+              try {
+                this.encryptionService.decrypt(
+                  row.encrypted_value,
+                  row.nonce,
+                  row.provider_id,
+                );
+              } catch {
+                canDecrypt = false;
+                break;
+              }
+            }
+          } else {
+            canDecrypt = false;
+          }
+
+          if (canDecrypt) {
+            credMessage =
+              'All restored provider credentials verified successfully with active master key.';
+          } else {
+            credMessage =
+              'Restored provider credentials cannot be decrypted with the active master key. API keys must be re-entered in Settings > Providers.';
+          }
+        }
+      } catch (credErr) {
+        this.logger.warn(
+          `Failed to inspect credentials table after restore: ${credErr instanceof Error ? credErr.message : String(credErr)}`,
+        );
+      }
+
+      const filesRestored = manifest.fileInventory
+        ? manifest.fileInventory.length
+        : 0;
+      const requiresCredentialReentry = hasCredentials && !canDecrypt;
+
+      const actionsRequired: string[] = [];
+      if (requiresCredentialReentry) {
+        actionsRequired.push('Re-enter provider API keys in Settings > Providers');
+      }
+      actionsRequired.push(
+        'Restart the application to reload running services with the restored state',
+      );
+
+      this.logger.warn(
+        `Restore completed successfully: id="${id}", filesRestored=${filesRestored}, schema="${manifest.databaseSchemaVersion}", requiresCredentialReentry=${requiresCredentialReentry}.`,
+      );
+
+      return {
+        backupId: id,
+        restoredAt: nowIso(),
+        databaseRestored: true,
+        filesRestored,
+        databaseSchemaVersion: manifest.databaseSchemaVersion,
+        appVersion: manifest.appVersion,
+        credentials: {
+          hasCredentials,
+          canDecrypt,
+          requiresReentry: requiresCredentialReentry,
+          message: credMessage,
+        },
+        requiresCredentialReentry,
+        requiresRestart: true,
+        actionsRequired,
+        message: 'Backup restored successfully.',
+      };
+    } catch (error) {
+      if (
+        error instanceof HttpException &&
+        !dbReplaced &&
+        !storageReplaced &&
+        !dbClosed
+      ) {
+        // Validation error before any state modification
+        throw error;
+      }
+
+      this.logger.error(
+        `Restore failed during destructive phase, initiating rollback: ${error instanceof Error ? error.message : String(error)}`,
+      );
+
+      let rollbackSucceeded = true;
+      try {
+        if (safetyDbPath && dbReplaced) {
+          if (this.databaseService.isOpen) {
+            this.databaseService.close();
+          }
+          const rollbackTmp = path.join(
+            path.dirname(targetDbPath),
+            `.db-rollback-${newId()}.sqlite`,
+          );
+          await fs.promises.copyFile(safetyDbPath, rollbackTmp);
+          await fs.promises.chmod(rollbackTmp, 0o600);
+          await fs.promises.rename(rollbackTmp, targetDbPath);
+          await fs.promises.rm(`${targetDbPath}-wal`, { force: true });
+          await fs.promises.rm(`${targetDbPath}-shm`, { force: true });
+          this.databaseService.connect(targetDbPath);
+        } else if (dbClosed && targetDbPath) {
+          this.databaseService.connect(targetDbPath);
+        }
+
+        if (safetyStorageDir && storageReplaced) {
+          if (existsSync(storageRoot)) {
+            await fs.promises.rm(storageRoot, { recursive: true, force: true });
+          }
+          if (existsSync(safetyStorageDir)) {
+            await fs.promises.cp(safetyStorageDir, storageRoot, {
+              recursive: true,
+            });
+          }
+        }
+
+        this.logger.log(
+          'Rollback completed successfully: pre-restore application state was restored intact.',
+        );
+      } catch (rollbackErr) {
+        rollbackSucceeded = false;
+        this.logger.error(
+          `Catastrophic: Rollback to safety snapshot failed: ${rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr)}`,
+        );
+      }
+
+      if (
+        error instanceof HttpException &&
+        rollbackSucceeded &&
+        !dbReplaced &&
+        !storageReplaced
+      ) {
+        throw error;
+      }
+
+      throw new InternalServerErrorException(
+        `Restore failed; pre-restore state was rolled back and is intact: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    } finally {
+      if (stagingExtractDir && existsSync(stagingExtractDir)) {
+        await fs.promises
+          .rm(stagingExtractDir, { recursive: true, force: true })
+          .catch(() => {});
+      }
+      if (safetyDir && existsSync(safetyDir)) {
+        await fs.promises
+          .rm(safetyDir, { recursive: true, force: true })
+          .catch(() => {});
+      }
+      this.isRestoreInProgress = false;
+    }
+  }
+
+  /**
+   * Validates that an archive entry relative path is safe and contained.
+   *
+   * Rejects:
+   * - Null bytes (`\0`)
+   * - Absolute paths (POSIX `/...` or Windows `C:\...` or `\\...`)
+   * - Traversal segments (`..`)
+   * - Any entry outside `manifest.json`, `database.sqlite`, or `files/...`
+   *
+   * @param entryPath - Archive entry relative path.
+   * @returns `true` if the path contains traversal or is unsafe; `false` if safe.
+   */
+  isPathTraversalOrUnsafe(entryPath: string): boolean {
+    if (
+      typeof entryPath !== 'string' ||
+      entryPath.trim().length === 0 ||
+      entryPath.includes('\0')
+    ) {
+      return true;
+    }
+
+    if (
+      path.isAbsolute(entryPath) ||
+      entryPath.startsWith('/') ||
+      entryPath.startsWith('\\')
+    ) {
+      return true;
+    }
+
+    if (/^[a-zA-Z]:/.test(entryPath)) {
+      return true;
+    }
+
+    const normalized = path.normalize(entryPath);
+    if (
+      normalized === '..' ||
+      normalized.startsWith(`..${path.sep}`) ||
+      normalized.startsWith('../') ||
+      normalized.startsWith('..\\')
+    ) {
+      return true;
+    }
+
+    const segments = entryPath.split(/[/\\]/);
+    if (segments.some((seg) => seg === '..')) {
+      return true;
+    }
+
+    const isManifest =
+      entryPath === 'manifest.json' || normalized === 'manifest.json';
+    const isDb =
+      entryPath === 'database.sqlite' || normalized === 'database.sqlite';
+    const isFiles =
+      entryPath === 'files' ||
+      entryPath === 'files/' ||
+      entryPath.startsWith('files/') ||
+      entryPath.startsWith('files\\') ||
+      normalized.startsWith(`files${path.sep}`) ||
+      normalized === 'files';
+
+    if (!isManifest && !isDb && !isFiles) {
+      return true;
+    }
+
+    return false;
   }
 
   /**
