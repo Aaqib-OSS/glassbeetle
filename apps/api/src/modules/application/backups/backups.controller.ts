@@ -27,15 +27,13 @@ import {
 } from '@nestjs/swagger';
 import type { Request, Response } from 'express';
 import { ApiErrorResponseDto } from '../../../common/http/api-error.js';
+import { parseRangeHeader } from '../../../common/http/byte-range.js';
+import { formatContentDisposition } from '../../../common/http/content-disposition.js';
 import { ParseUuidV7Pipe } from '../../../common/identifiers/index.js';
 import { type PaginatedResponse } from '../../../common/pagination/paginated-response.dto.js';
 import { BackupsService } from './backups.service.js';
 import type { BackupArchiveStreamInfo } from './backups.types.js';
-import {
-  formatContentDisposition,
-  generateBackupDownloadFilename,
-  parseRangeHeader,
-} from './backup-download.js';
+import { generateBackupDownloadFilename } from './backup-download.js';
 import {
   BackupResponseDto,
   CreateBackupDto,

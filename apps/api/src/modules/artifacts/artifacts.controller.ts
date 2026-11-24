@@ -33,14 +33,12 @@ import {
   ApiUnprocessableEntityResponse,
 } from '@nestjs/swagger';
 import type { Request, Response } from 'express';
+import { parseRangeHeader } from '../../common/http/byte-range.js';
 import { ParseUuidV7Pipe } from '../../common/identifiers/index.js';
 import type { PaginatedResponse } from '../../common/pagination/paginated-response.dto.js';
 import { matchesEtag } from '../user/user.controller.js';
 import { ArtifactUploadInterceptor } from './artifact-upload.interceptor.js';
-import {
-  parseRangeHeader,
-  resolveContentSecurityPolicy,
-} from './artifacts-content-policy.js';
+import { resolveContentSecurityPolicy } from './artifacts-content-policy.js';
 import { ArtifactContent, ArtifactsService } from './artifacts.service.js';
 import {
   ArtifactResponseDto,
