@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { CryptoModule } from '../../crypto/crypto.module.js';
 import { ApplicationController } from './application.controller.js';
 import { BackupsController } from './backups/backups.controller.js';
 import { BackupsService } from './backups/backups.service.js';
@@ -14,7 +15,8 @@ import { BackupPolicyService } from './backup-policy/backup-policy.service.js';
  * seeded with one row by the bootstrap migration.
  */
 @Module({
+  imports: [CryptoModule],
   controllers: [ApplicationController, BackupsController, BackupPolicyController],
-  providers: [BackupsService, BackupPolicyService]
+  providers: [BackupsService, BackupPolicyService],
 })
 export class ApplicationModule {}
