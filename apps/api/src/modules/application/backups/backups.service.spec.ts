@@ -846,9 +846,9 @@ describe('BackupsService', () => {
 
       fs.unlinkSync(path.join(testDataDir, 'backups', row!.file_path));
 
-      await expect(
-        backupsService.getBackupArchive(backup.id),
-      ).rejects.toThrow(GoneException);
+      await expect(backupsService.getBackupArchive(backup.id)).rejects.toThrow(
+        GoneException,
+      );
     });
 
     it('rejects a database row whose file_path points outside the backup directory (absolute path)', async () => {
@@ -941,7 +941,10 @@ describe('BackupsService', () => {
       const content = Buffer.from('malicious payload');
       const sizeOctal = content.length.toString(8).padStart(11, '0') + ' ';
       header.write(sizeOctal, 124, 12, 'utf8');
-      const mtimeOctal = Math.floor(Date.now() / 1000).toString(8).padStart(11, '0') + ' ';
+      const mtimeOctal =
+        Math.floor(Date.now() / 1000)
+          .toString(8)
+          .padStart(11, '0') + ' ';
       header.write(mtimeOctal, 136, 12, 'utf8');
       header.write('        ', 148, 8, 'utf8');
       header.write('0', 156, 1, 'utf8');
@@ -966,7 +969,9 @@ describe('BackupsService', () => {
 
     it('restores a valid backup and asserts database records and storage files match the archive snapshot', async () => {
       // 1. Seed initial data
-      const prompt = fixtures.createSystemPrompt({ name: 'Prompt Before Backup' });
+      const prompt = fixtures.createSystemPrompt({
+        name: 'Prompt Before Backup',
+      });
       const provider = fixtures.createProvider({ name: 'Anthropic Before' });
       const model = fixtures.createModel({
         provider_id: provider.id,
@@ -977,14 +982,24 @@ describe('BackupsService', () => {
         system_prompt_id: prompt.id,
         model_id: model.id,
       });
-      const chat = fixtures.createChat({ agent_id: agent.id, title: 'Chat In Backup' });
-      fixtures.createMessage({ chat_id: chat.id, content: 'Message in backup' });
+      const chat = fixtures.createChat({
+        agent_id: agent.id,
+        title: 'Chat In Backup',
+      });
+      fixtures.createMessage({
+        chat_id: chat.id,
+        content: 'Message in backup',
+      });
 
       // Seed file storage
       const avatarContent = Buffer.from('original avatar bytes');
-      const avatarResult = await fileStorageService.write('pictures', avatarContent, {
-        declaredMimeType: 'image/png',
-      });
+      const avatarResult = await fileStorageService.write(
+        'pictures',
+        avatarContent,
+        {
+          declaredMimeType: 'image/png',
+        },
+      );
 
       // 2. Create the backup
       const backup = await backupsService.createBackup({
@@ -993,7 +1008,9 @@ describe('BackupsService', () => {
       });
 
       // 3. Mutate the active application state (add new data and files)
-      const afterPrompt = fixtures.createSystemPrompt({ name: 'Prompt Created After' });
+      const afterPrompt = fixtures.createSystemPrompt({
+        name: 'Prompt Created After',
+      });
       const afterAgent = fixtures.createAgent({
         name: 'Agent Created After',
         system_prompt_id: afterPrompt.id,
@@ -1009,7 +1026,9 @@ describe('BackupsService', () => {
       expect(
         dbService.get('SELECT id FROM agents WHERE id = ?', [afterAgent.id]),
       ).toBeDefined();
-      expect(fs.existsSync(path.join(testStorageDir, afterFile.reference))).toBe(true);
+      expect(
+        fs.existsSync(path.join(testStorageDir, afterFile.reference)),
+      ).toBe(true);
 
       // 4. Perform restore
       const outcome = await backupsService.restoreBackup(backup.id, {
@@ -1055,20 +1074,26 @@ describe('BackupsService', () => {
 
       // 7. Assert application remains fully functional and queryable
       expect(dbService.isOpen).toBe(true);
-      const newPrompt = fixtures.createSystemPrompt({ name: 'Post-Restore Prompt' });
+      const newPrompt = fixtures.createSystemPrompt({
+        name: 'Post-Restore Prompt',
+      });
       expect(
-        dbService.get('SELECT name FROM system_prompts WHERE id = ?', [newPrompt.id]),
+        dbService.get('SELECT name FROM system_prompts WHERE id = ?', [
+          newPrompt.id,
+        ]),
       ).toEqual({ name: 'Post-Restore Prompt' });
     });
 
     it('refuses restore without explicit confirmation and leaves application state untouched', async () => {
-      const prompt = fixtures.createSystemPrompt({ name: 'Unconfirmed Prompt' });
+      const prompt = fixtures.createSystemPrompt({
+        name: 'Unconfirmed Prompt',
+      });
       const backup = await backupsService.createBackup({ trigger: 'manual' });
 
       // Call without confirm
-      await expect(
-        backupsService.restoreBackup(backup.id, {}),
-      ).rejects.toThrow(BadRequestException);
+      await expect(backupsService.restoreBackup(backup.id, {})).rejects.toThrow(
+        BadRequestException,
+      );
 
       // Call with confirm='false'
       await expect(
@@ -1077,7 +1102,9 @@ describe('BackupsService', () => {
 
       // Assert state untouched
       expect(
-        dbService.get('SELECT name FROM system_prompts WHERE id = ?', [prompt.id]),
+        dbService.get('SELECT name FROM system_prompts WHERE id = ?', [
+          prompt.id,
+        ]),
       ).toBeDefined();
     });
 
@@ -1105,7 +1132,9 @@ describe('BackupsService', () => {
     });
 
     it('refuses archive with newer or incompatible schema version with 409 Conflict, leaving state untouched', async () => {
-      const prompt = fixtures.createSystemPrompt({ name: 'Schema Test Prompt' });
+      const prompt = fixtures.createSystemPrompt({
+        name: 'Schema Test Prompt',
+      });
       const id = newId();
       const targetDir = (backupsService as any).resolveTargetDirectory();
       const archiveFile = path.join(targetDir, `backup-${id}.tar.gz`);
@@ -1138,18 +1167,25 @@ describe('BackupsService', () => {
 
       // Assert application state untouched
       expect(
-        dbService.get('SELECT name FROM system_prompts WHERE id = ?', [prompt.id]),
+        dbService.get('SELECT name FROM system_prompts WHERE id = ?', [
+          prompt.id,
+        ]),
       ).toBeDefined();
     });
 
     it('refuses corrupt archive with 422 Unprocessable Entity, leaving state untouched', async () => {
-      const prompt = fixtures.createSystemPrompt({ name: 'Corrupt Test Prompt' });
+      const prompt = fixtures.createSystemPrompt({
+        name: 'Corrupt Test Prompt',
+      });
       const id = newId();
       const targetDir = (backupsService as any).resolveTargetDirectory();
       const archiveFile = path.join(targetDir, `backup-${id}.tar.gz`);
 
       // Write random garbage bytes
-      fs.writeFileSync(archiveFile, Buffer.from('not a valid gzip tar archive at all'));
+      fs.writeFileSync(
+        archiveFile,
+        Buffer.from('not a valid gzip tar archive at all'),
+      );
 
       dbService.run(
         `INSERT INTO backups (id, file_path, size_bytes, trigger, created_at)
@@ -1162,12 +1198,16 @@ describe('BackupsService', () => {
       ).rejects.toThrow(UnprocessableEntityException);
 
       expect(
-        dbService.get('SELECT name FROM system_prompts WHERE id = ?', [prompt.id]),
+        dbService.get('SELECT name FROM system_prompts WHERE id = ?', [
+          prompt.id,
+        ]),
       ).toBeDefined();
     });
 
     it('refuses archive with path traversal entry (../evil.txt) with 422, and never writes outside storage', async () => {
-      const prompt = fixtures.createSystemPrompt({ name: 'Traversal Test Prompt' });
+      const prompt = fixtures.createSystemPrompt({
+        name: 'Traversal Test Prompt',
+      });
       const id = newId();
       const targetDir = (backupsService as any).resolveTargetDirectory();
       const archiveFile = path.join(targetDir, `backup-${id}.tar.gz`);
@@ -1194,7 +1234,9 @@ describe('BackupsService', () => {
 
       // Assert state untouched
       expect(
-        dbService.get('SELECT name FROM system_prompts WHERE id = ?', [prompt.id]),
+        dbService.get('SELECT name FROM system_prompts WHERE id = ?', [
+          prompt.id,
+        ]),
       ).toBeDefined();
     });
 
@@ -1305,7 +1347,8 @@ describe('BackupsService', () => {
           {
             path: 'files/test.txt',
             sizeBytes: 11,
-            sha256: 'deadbeef00000000000000000000000000000000000000000000000000000000',
+            sha256:
+              'deadbeef00000000000000000000000000000000000000000000000000000000',
           },
         ],
       };
@@ -1328,11 +1371,15 @@ describe('BackupsService', () => {
     });
 
     it('rolls back and leaves pre-restore state intact on simulated failure after validation', async () => {
-      const originalPrompt = fixtures.createSystemPrompt({ name: 'Original Pre-Restore Prompt' });
+      const originalPrompt = fixtures.createSystemPrompt({
+        name: 'Original Pre-Restore Prompt',
+      });
       const backup = await backupsService.createBackup({ trigger: 'manual' });
 
       // Add data after backup
-      const mutatedPrompt = fixtures.createSystemPrompt({ name: 'Mutated State Prompt' });
+      const mutatedPrompt = fixtures.createSystemPrompt({
+        name: 'Mutated State Prompt',
+      });
 
       await expect(
         backupsService.restoreBackup(backup.id, {
@@ -1343,20 +1390,28 @@ describe('BackupsService', () => {
 
       // Assert pre-restore state remained completely intact
       expect(
-        dbService.get('SELECT name FROM system_prompts WHERE id = ?', [mutatedPrompt.id]),
+        dbService.get('SELECT name FROM system_prompts WHERE id = ?', [
+          mutatedPrompt.id,
+        ]),
       ).toBeDefined();
       expect(
-        dbService.get('SELECT name FROM system_prompts WHERE id = ?', [originalPrompt.id]),
+        dbService.get('SELECT name FROM system_prompts WHERE id = ?', [
+          originalPrompt.id,
+        ]),
       ).toBeDefined();
       expect(dbService.isOpen).toBe(true);
     });
 
     it('rolls back database and leaves pre-restore state intact on simulated failure mid-database-replacement', async () => {
-      const originalPrompt = fixtures.createSystemPrompt({ name: 'Original Pre-Restore Prompt' });
+      const originalPrompt = fixtures.createSystemPrompt({
+        name: 'Original Pre-Restore Prompt',
+      });
       const backup = await backupsService.createBackup({ trigger: 'manual' });
 
       // Mutate state
-      const mutatedPrompt = fixtures.createSystemPrompt({ name: 'Mutated State Prompt' });
+      const mutatedPrompt = fixtures.createSystemPrompt({
+        name: 'Mutated State Prompt',
+      });
 
       await expect(
         backupsService.restoreBackup(backup.id, {
@@ -1368,19 +1423,27 @@ describe('BackupsService', () => {
       // Assert rollback reconnected and restored the mutated active state
       expect(dbService.isOpen).toBe(true);
       expect(
-        dbService.get('SELECT name FROM system_prompts WHERE id = ?', [mutatedPrompt.id]),
+        dbService.get('SELECT name FROM system_prompts WHERE id = ?', [
+          mutatedPrompt.id,
+        ]),
       ).toBeDefined();
       expect(
-        dbService.get('SELECT name FROM system_prompts WHERE id = ?', [originalPrompt.id]),
+        dbService.get('SELECT name FROM system_prompts WHERE id = ?', [
+          originalPrompt.id,
+        ]),
       ).toBeDefined();
     });
 
     it('rolls back database and file storage to pre-restore state on simulated failure mid-file-replacement', async () => {
-      const originalPrompt = fixtures.createSystemPrompt({ name: 'Original Pre-Restore Prompt' });
+      const originalPrompt = fixtures.createSystemPrompt({
+        name: 'Original Pre-Restore Prompt',
+      });
       const backup = await backupsService.createBackup({ trigger: 'manual' });
 
       // Mutate database and storage state
-      const mutatedPrompt = fixtures.createSystemPrompt({ name: 'Mutated State Prompt' });
+      const mutatedPrompt = fixtures.createSystemPrompt({
+        name: 'Mutated State Prompt',
+      });
       const mutatedFile = await fileStorageService.write(
         'pictures',
         Buffer.from('mutated file content'),
@@ -1397,10 +1460,14 @@ describe('BackupsService', () => {
       // Assert rollback restored database
       expect(dbService.isOpen).toBe(true);
       expect(
-        dbService.get('SELECT name FROM system_prompts WHERE id = ?', [mutatedPrompt.id]),
+        dbService.get('SELECT name FROM system_prompts WHERE id = ?', [
+          mutatedPrompt.id,
+        ]),
       ).toBeDefined();
       expect(
-        dbService.get('SELECT name FROM system_prompts WHERE id = ?', [originalPrompt.id]),
+        dbService.get('SELECT name FROM system_prompts WHERE id = ?', [
+          originalPrompt.id,
+        ]),
       ).toBeDefined();
 
       // Assert rollback restored file storage
@@ -1516,6 +1583,180 @@ describe('BackupsService', () => {
       ).rejects.toThrow(ConflictException);
 
       (backupsService as any).isBackupInProgress = false;
+    });
+  });
+
+  describe('enforceRetention', () => {
+    it('prunes oldest scheduled backups beyond retentionCount, deleting both database rows and archive files on disk', async () => {
+      // Create 4 scheduled backups with distinct timestamps
+      const b1 = await backupsService.createBackup({ trigger: 'scheduled' });
+      const b2 = await backupsService.createBackup({ trigger: 'scheduled' });
+      const b3 = await backupsService.createBackup({ trigger: 'scheduled' });
+      const b4 = await backupsService.createBackup({ trigger: 'scheduled' });
+
+      // Update timestamps so order is strictly deterministic: b1 oldest, b4 newest
+      dbService.run(
+        "UPDATE backups SET created_at = '2026-01-01T00:00:00.000Z' WHERE id = ?",
+        [b1.id],
+      );
+      dbService.run(
+        "UPDATE backups SET created_at = '2026-01-02T00:00:00.000Z' WHERE id = ?",
+        [b2.id],
+      );
+      dbService.run(
+        "UPDATE backups SET created_at = '2026-01-03T00:00:00.000Z' WHERE id = ?",
+        [b3.id],
+      );
+      dbService.run(
+        "UPDATE backups SET created_at = '2026-01-04T00:00:00.000Z' WHERE id = ?",
+        [b4.id],
+      );
+
+      const b1Path = path.join(
+        testDataDir,
+        'backups',
+        `backup-${b1.id}.tar.gz`,
+      );
+      const b2Path = path.join(
+        testDataDir,
+        'backups',
+        `backup-${b2.id}.tar.gz`,
+      );
+      const b3Path = path.join(
+        testDataDir,
+        'backups',
+        `backup-${b3.id}.tar.gz`,
+      );
+      const b4Path = path.join(
+        testDataDir,
+        'backups',
+        `backup-${b4.id}.tar.gz`,
+      );
+
+      expect(fs.existsSync(b1Path)).toBe(true);
+      expect(fs.existsSync(b2Path)).toBe(true);
+      expect(fs.existsSync(b3Path)).toBe(true);
+      expect(fs.existsSync(b4Path)).toBe(true);
+
+      // Retain 2: b4 and b3 should be kept; b2 and b1 should be pruned
+      const pruned = await backupsService.enforceRetention(2);
+
+      expect(pruned).toEqual([b2.id, b1.id]);
+
+      // DB rows
+      expect(await backupsService.findById(b1.id)).toBeNull();
+      expect(await backupsService.findById(b2.id)).toBeNull();
+      expect(await backupsService.findById(b3.id)).not.toBeNull();
+      expect(await backupsService.findById(b4.id)).not.toBeNull();
+
+      // Files on disk
+      expect(fs.existsSync(b1Path)).toBe(false);
+      expect(fs.existsSync(b2Path)).toBe(false);
+      expect(fs.existsSync(b3Path)).toBe(true);
+      expect(fs.existsSync(b4Path)).toBe(true);
+    });
+
+    it('never prunes manual backups, strictly preserving them regardless of retentionCount', async () => {
+      // Create 2 manual backups and 3 scheduled backups
+      const m1 = await backupsService.createBackup({ trigger: 'manual' });
+      const m2 = await backupsService.createBackup({ trigger: 'manual' });
+
+      const s1 = await backupsService.createBackup({ trigger: 'scheduled' });
+      const s2 = await backupsService.createBackup({ trigger: 'scheduled' });
+      const s3 = await backupsService.createBackup({ trigger: 'scheduled' });
+
+      // Timestamps: manual ones are older than scheduled ones
+      dbService.run(
+        "UPDATE backups SET created_at = '2026-01-01T00:00:00.000Z' WHERE id = ?",
+        [m1.id],
+      );
+      dbService.run(
+        "UPDATE backups SET created_at = '2026-01-02T00:00:00.000Z' WHERE id = ?",
+        [m2.id],
+      );
+      dbService.run(
+        "UPDATE backups SET created_at = '2026-01-03T00:00:00.000Z' WHERE id = ?",
+        [s1.id],
+      );
+      dbService.run(
+        "UPDATE backups SET created_at = '2026-01-04T00:00:00.000Z' WHERE id = ?",
+        [s2.id],
+      );
+      dbService.run(
+        "UPDATE backups SET created_at = '2026-01-05T00:00:00.000Z' WHERE id = ?",
+        [s3.id],
+      );
+
+      const m1Path = path.join(
+        testDataDir,
+        'backups',
+        `backup-${m1.id}.tar.gz`,
+      );
+      const m2Path = path.join(
+        testDataDir,
+        'backups',
+        `backup-${m2.id}.tar.gz`,
+      );
+      const s1Path = path.join(
+        testDataDir,
+        'backups',
+        `backup-${s1.id}.tar.gz`,
+      );
+      const s2Path = path.join(
+        testDataDir,
+        'backups',
+        `backup-${s2.id}.tar.gz`,
+      );
+      const s3Path = path.join(
+        testDataDir,
+        'backups',
+        `backup-${s3.id}.tar.gz`,
+      );
+
+      // Retain 1 scheduled backup: should prune s1 and s2, but NEVER m1 or m2
+      const pruned = await backupsService.enforceRetention(1);
+
+      expect(pruned).toEqual([s2.id, s1.id]);
+
+      // Scheduled backups: s1 and s2 deleted, s3 retained
+      expect(await backupsService.findById(s1.id)).toBeNull();
+      expect(await backupsService.findById(s2.id)).toBeNull();
+      expect(await backupsService.findById(s3.id)).not.toBeNull();
+      expect(fs.existsSync(s1Path)).toBe(false);
+      expect(fs.existsSync(s2Path)).toBe(false);
+      expect(fs.existsSync(s3Path)).toBe(true);
+
+      // Manual backups: both MUST be preserved
+      expect(await backupsService.findById(m1.id)).not.toBeNull();
+      expect(await backupsService.findById(m2.id)).not.toBeNull();
+      expect(fs.existsSync(m1Path)).toBe(true);
+      expect(fs.existsSync(m2Path)).toBe(true);
+    });
+
+    it('does not prune when scheduled backups count is less than or equal to retentionCount', async () => {
+      const b1 = await backupsService.createBackup({ trigger: 'scheduled' });
+      const b2 = await backupsService.createBackup({ trigger: 'scheduled' });
+
+      const pruned = await backupsService.enforceRetention(5);
+      expect(pruned).toEqual([]);
+
+      expect(await backupsService.findById(b1.id)).not.toBeNull();
+      expect(await backupsService.findById(b2.id)).not.toBeNull();
+    });
+
+    it('defensively aborts retention on non-positive or invalid retentionCount without deleting any backups', async () => {
+      const b1 = await backupsService.createBackup({ trigger: 'scheduled' });
+      const b2 = await backupsService.createBackup({ trigger: 'scheduled' });
+
+      expect(await backupsService.enforceRetention(0)).toEqual([]);
+      expect(await backupsService.enforceRetention(-5)).toEqual([]);
+      expect(await backupsService.enforceRetention(NaN)).toEqual([]);
+      expect(await backupsService.enforceRetention(null as any)).toEqual([]);
+      expect(await backupsService.enforceRetention('7' as any)).toEqual([]);
+
+      // All backups remain intact
+      expect(await backupsService.findById(b1.id)).not.toBeNull();
+      expect(await backupsService.findById(b2.id)).not.toBeNull();
     });
   });
 });

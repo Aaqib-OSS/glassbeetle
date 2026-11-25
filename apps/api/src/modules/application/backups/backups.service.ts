@@ -154,7 +154,9 @@ export class BackupsService {
     options: CreateBackupOptions = {},
   ): Promise<BackupResponseDto> {
     if (this.isBackupInProgress || this.isRestoreInProgress) {
-      throw new ConflictException('A backup or restore operation is already in progress');
+      throw new ConflictException(
+        'A backup or restore operation is already in progress',
+      );
     }
 
     this.isBackupInProgress = true;
@@ -465,6 +467,136 @@ export class BackupsService {
   }
 
   /**
+   * Enforces the retention policy by deleting the oldest scheduled backups beyond retentionCount.
+   *
+   * ## Retention Policy Decision & Threat Model
+   * Automatic retention is destructive and must be carefully scoped:
+   * 1. **Scheduled Backups Only**: Retention strictly queries and deletes backups with
+   *    `trigger = 'scheduled'`. User-created manual backups (`trigger = 'manual'`) are
+   *    **NEVER** deleted by retention enforcement. Users create manual backups intentionally
+   *    before risky operations; deleting them automatically because an automatic policy wants
+   *    to keep N backups would be an unexpected and catastrophic data loss event.
+   * 2. **Defensive Non-Positive Guard**: If `retentionCount <= 0` (e.g. invalid or corrupted
+   *    database value), retention enforcement is aborted immediately without deleting any
+   *    backups. This prevents catastrophic mass deletion if retention_count in the database is 0.
+   * 3. **Ordering**: Scheduled backups are ordered newest first (`created_at DESC, id DESC`).
+   *    The first `retentionCount` scheduled backups are preserved; all scheduled backups
+   *    beyond this threshold are deleted.
+   * 4. **Atomicity & Consistency**: Reuses `deleteBackup(id)` so that both the database row
+   *    and the physical archive file on disk are removed consistently.
+   *
+   * @param retentionCount - Number of recent scheduled backups to retain (must be >= 1).
+   * @returns Array of deleted backup IDs.
+   */
+  async enforceRetention(retentionCount: number): Promise<string[]> {
+    if (
+      typeof retentionCount !== 'number' ||
+      !Number.isFinite(retentionCount) ||
+      retentionCount < 1
+    ) {
+      this.logger.warn(
+        `Retention enforcement skipped: non-positive or invalid retentionCount (${retentionCount}). No backups were deleted.`,
+      );
+      return [];
+    }
+
+    // Query ONLY scheduled backups, ordered newest first
+    const scheduledBackups = this.databaseService.all<{ id: string }>(
+      `SELECT id FROM backups WHERE trigger = 'scheduled' ORDER BY created_at DESC, id DESC`,
+    );
+
+    if (scheduledBackups.length <= retentionCount) {
+      return [];
+    }
+
+    const backupsToDelete = scheduledBackups.slice(retentionCount);
+    const deletedIds: string[] = [];
+
+    this.logger.log(
+      `Enforcing retention: found ${scheduledBackups.length} scheduled backups, retaining ${retentionCount}, pruning ${backupsToDelete.length} oldest.`,
+    );
+
+    for (const backup of backupsToDelete) {
+      try {
+        await this.deleteBackup(backup.id);
+        deletedIds.push(backup.id);
+        this.logger.log(`Retention pruned scheduled backup: id=${backup.id}`);
+      } catch (error) {
+        this.logger.error(
+          `Failed to prune scheduled backup id=${backup.id} during retention: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+
+    return deletedIds;
+  }
+
+  /**
+   * Enforces the retention policy by deleting the oldest scheduled backups beyond retentionCount.
+   *
+   * ## Retention Policy Decision & Threat Model
+   * Automatic retention is destructive and must be carefully scoped:
+   * 1. **Scheduled Backups Only**: Retention strictly queries and deletes backups with
+   *    `trigger = 'scheduled'`. User-created manual backups (`trigger = 'manual'`) are
+   *    **NEVER** deleted by retention enforcement. Users create manual backups intentionally
+   *    before risky operations; deleting them automatically because an automatic policy wants
+   *    to keep N backups would be an unexpected and catastrophic data loss event.
+   * 2. **Defensive Non-Positive Guard**: If `retentionCount <= 0` (e.g. invalid or corrupted
+   *    database value), retention enforcement is aborted immediately without deleting any
+   *    backups. This prevents catastrophic mass deletion if retention_count in the database is 0.
+   * 3. **Ordering**: Scheduled backups are ordered newest first (`created_at DESC, id DESC`).
+   *    The first `retentionCount` scheduled backups are preserved; all scheduled backups
+   *    beyond this threshold are deleted.
+   * 4. **Atomicity & Consistency**: Reuses `deleteBackup(id)` so that both the database row
+   *    and the physical archive file on disk are removed consistently.
+   *
+   * @param retentionCount - Number of recent scheduled backups to retain (must be >= 1).
+   * @returns Array of deleted backup IDs.
+   */
+  async enforceRetention(retentionCount: number): Promise<string[]> {
+    if (
+      typeof retentionCount !== 'number' ||
+      !Number.isFinite(retentionCount) ||
+      retentionCount < 1
+    ) {
+      this.logger.warn(
+        `Retention enforcement skipped: non-positive or invalid retentionCount (${retentionCount}). No backups were deleted.`,
+      );
+      return [];
+    }
+
+    // Query ONLY scheduled backups, ordered newest first
+    const scheduledBackups = this.databaseService.all<{ id: string }>(
+      `SELECT id FROM backups WHERE trigger = 'scheduled' ORDER BY created_at DESC, id DESC`,
+    );
+
+    if (scheduledBackups.length <= retentionCount) {
+      return [];
+    }
+
+    const backupsToDelete = scheduledBackups.slice(retentionCount);
+    const deletedIds: string[] = [];
+
+    this.logger.log(
+      `Enforcing retention: found ${scheduledBackups.length} scheduled backups, retaining ${retentionCount}, pruning ${backupsToDelete.length} oldest.`,
+    );
+
+    for (const backup of backupsToDelete) {
+      try {
+        await this.deleteBackup(backup.id);
+        deletedIds.push(backup.id);
+        this.logger.log(`Retention pruned scheduled backup: id=${backup.id}`);
+      } catch (error) {
+        this.logger.error(
+          `Failed to prune scheduled backup id=${backup.id} during retention: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+
+    return deletedIds;
+  }
+
+  /**
    * Retrieves archive metadata and an open stream factory for streaming the archive download.
    *
    * ## Security & Integrity
@@ -688,7 +820,10 @@ export class BackupsService {
 
       let manifest: BackupManifest;
       try {
-        const manifestContent = await fs.promises.readFile(manifestPath, 'utf8');
+        const manifestContent = await fs.promises.readFile(
+          manifestPath,
+          'utf8',
+        );
         manifest = JSON.parse(manifestContent);
       } catch (parseErr) {
         throw new UnprocessableEntityException({
@@ -728,7 +863,10 @@ export class BackupsService {
 
       // 8. Validate database.sqlite snapshot inside archive
       const extractedDbPath = path.join(stagingExtractDir, 'database.sqlite');
-      if (!existsSync(extractedDbPath) || !fs.statSync(extractedDbPath).isFile()) {
+      if (
+        !existsSync(extractedDbPath) ||
+        !fs.statSync(extractedDbPath).isFile()
+      ) {
         throw new UnprocessableEntityException({
           code: 'MISSING_DATABASE_SNAPSHOT',
           message: 'Backup archive is missing database.sqlite',
@@ -749,7 +887,9 @@ export class BackupsService {
       }
 
       try {
-        const integrity = readOnlyDb.pragma('integrity_check', { simple: true });
+        const integrity = readOnlyDb.pragma('integrity_check', {
+          simple: true,
+        });
         if (integrity !== 'ok') {
           throw new UnprocessableEntityException({
             code: 'DATABASE_INTEGRITY_CHECK_FAILED',
@@ -841,7 +981,9 @@ export class BackupsService {
 
       safetyStorageDir = path.join(safetyDir, 'storage');
       if (existsSync(storageRoot)) {
-        await fs.promises.cp(storageRoot, safetyStorageDir, { recursive: true });
+        await fs.promises.cp(storageRoot, safetyStorageDir, {
+          recursive: true,
+        });
         await fs.promises.chmod(safetyStorageDir, 0o700);
       }
 
@@ -857,7 +999,9 @@ export class BackupsService {
         targetDbPath === ':memory:' ||
         targetDbPath.startsWith('file::memory:')
       ) {
-        throw new BadRequestException('Cannot restore into an in-memory database');
+        throw new BadRequestException(
+          'Cannot restore into an in-memory database',
+        );
       }
 
       const dbDir = path.dirname(targetDbPath);
@@ -942,7 +1086,9 @@ export class BackupsService {
           provider_id: string;
           encrypted_value: Buffer;
           nonce: Buffer;
-        }>('SELECT provider_id, encrypted_value, nonce FROM provider_credentials');
+        }>(
+          'SELECT provider_id, encrypted_value, nonce FROM provider_credentials',
+        );
 
         if (credRows.length > 0) {
           hasCredentials = true;
@@ -984,7 +1130,9 @@ export class BackupsService {
 
       const actionsRequired: string[] = [];
       if (requiresCredentialReentry) {
-        actionsRequired.push('Re-enter provider API keys in Settings > Providers');
+        actionsRequired.push(
+          'Re-enter provider API keys in Settings > Providers',
+        );
       }
       actionsRequired.push(
         'Restart the application to reload running services with the restored state',
@@ -1255,7 +1403,8 @@ export class BackupsService {
         ) {
           throw new BadRequestException({
             code: 'INVALID_BACKUP_PATH',
-            message: 'Backup archive path escapes the backup directory boundary',
+            message:
+              'Backup archive path escapes the backup directory boundary',
           });
         }
 
@@ -1272,7 +1421,8 @@ export class BackupsService {
         if (!realResolvedForPrefix.startsWith(realTargetForPrefix)) {
           throw new BadRequestException({
             code: 'INVALID_BACKUP_PATH',
-            message: 'Backup archive path escapes the backup directory boundary',
+            message:
+              'Backup archive path escapes the backup directory boundary',
           });
         }
       } catch (err) {
