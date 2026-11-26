@@ -6,6 +6,7 @@
     "start": "ng serve --port 4200",
     "build": "ng build",
     "watch": "ng build --watch --configuration development",
+    "lint": "oxlint --deny-warnings src/",
     "test": "ng test",
     "format": "prettier --write \"src/**/*.{ts,html,scss}\"",
     "format:check": "prettier --check \"src/**/*.{ts,html,scss}\""
@@ -30,6 +31,7 @@
     "@angular/cli": "^21.2.29",
     "@angular/compiler-cli": "^21.2.25",
     "jsdom": "^31.0.1",
+    "oxlint": "^1.94.0",
     "prettier": "^3.10.1",
     "typescript": "~5.9.2",
     "vitest": "^4.0.8"
