@@ -130,12 +130,19 @@ export class BackupsService {
   private isBackupInProgress = false;
   private isRestoreInProgress = false;
 
+  /**
+   * Reports whether a backup or restore operation is actively in progress.
+   */
+  public get isOperationInProgress(): boolean {
+    return this.isBackupInProgress || this.isRestoreInProgress;
+  }
+
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly fileStorageService: FileStorageService,
     @Optional() private readonly appConfigService?: AppConfigService,
     @Optional() private readonly encryptionService?: EncryptionService,
-  ) {}
+  ) { }
 
   /**
    * Creates a self-contained backup archive and records its metadata.
@@ -286,19 +293,19 @@ export class BackupsService {
         if (partialArchivePath && existsSync(partialArchivePath)) {
           await fs.promises.unlink(partialArchivePath);
         }
-      } catch {}
+      } catch { }
 
       // Clean up final archive if write failed after creation
       try {
         if (finalArchivePath && existsSync(finalArchivePath)) {
           await fs.promises.unlink(finalArchivePath);
         }
-      } catch {}
+      } catch { }
 
       // Clean up database row if partially recorded
       try {
         this.databaseService.run('DELETE FROM backups WHERE id = ?', [id]);
-      } catch {}
+      } catch { }
 
       if (error instanceof HttpException) {
         throw error;
@@ -464,71 +471,6 @@ export class BackupsService {
         );
       }
     }
-  }
-
-  /**
-   * Enforces the retention policy by deleting the oldest scheduled backups beyond retentionCount.
-   *
-   * ## Retention Policy Decision & Threat Model
-   * Automatic retention is destructive and must be carefully scoped:
-   * 1. **Scheduled Backups Only**: Retention strictly queries and deletes backups with
-   *    `trigger = 'scheduled'`. User-created manual backups (`trigger = 'manual'`) are
-   *    **NEVER** deleted by retention enforcement. Users create manual backups intentionally
-   *    before risky operations; deleting them automatically because an automatic policy wants
-   *    to keep N backups would be an unexpected and catastrophic data loss event.
-   * 2. **Defensive Non-Positive Guard**: If `retentionCount <= 0` (e.g. invalid or corrupted
-   *    database value), retention enforcement is aborted immediately without deleting any
-   *    backups. This prevents catastrophic mass deletion if retention_count in the database is 0.
-   * 3. **Ordering**: Scheduled backups are ordered newest first (`created_at DESC, id DESC`).
-   *    The first `retentionCount` scheduled backups are preserved; all scheduled backups
-   *    beyond this threshold are deleted.
-   * 4. **Atomicity & Consistency**: Reuses `deleteBackup(id)` so that both the database row
-   *    and the physical archive file on disk are removed consistently.
-   *
-   * @param retentionCount - Number of recent scheduled backups to retain (must be >= 1).
-   * @returns Array of deleted backup IDs.
-   */
-  async enforceRetention(retentionCount: number): Promise<string[]> {
-    if (
-      typeof retentionCount !== 'number' ||
-      !Number.isFinite(retentionCount) ||
-      retentionCount < 1
-    ) {
-      this.logger.warn(
-        `Retention enforcement skipped: non-positive or invalid retentionCount (${retentionCount}). No backups were deleted.`,
-      );
-      return [];
-    }
-
-    // Query ONLY scheduled backups, ordered newest first
-    const scheduledBackups = this.databaseService.all<{ id: string }>(
-      `SELECT id FROM backups WHERE trigger = 'scheduled' ORDER BY created_at DESC, id DESC`,
-    );
-
-    if (scheduledBackups.length <= retentionCount) {
-      return [];
-    }
-
-    const backupsToDelete = scheduledBackups.slice(retentionCount);
-    const deletedIds: string[] = [];
-
-    this.logger.log(
-      `Enforcing retention: found ${scheduledBackups.length} scheduled backups, retaining ${retentionCount}, pruning ${backupsToDelete.length} oldest.`,
-    );
-
-    for (const backup of backupsToDelete) {
-      try {
-        await this.deleteBackup(backup.id);
-        deletedIds.push(backup.id);
-        this.logger.log(`Retention pruned scheduled backup: id=${backup.id}`);
-      } catch (error) {
-        this.logger.error(
-          `Failed to prune scheduled backup id=${backup.id} during retention: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      }
-    }
-
-    return deletedIds;
   }
 
   /**
@@ -1232,12 +1174,12 @@ export class BackupsService {
       if (stagingExtractDir && existsSync(stagingExtractDir)) {
         await fs.promises
           .rm(stagingExtractDir, { recursive: true, force: true })
-          .catch(() => {});
+          .catch(() => { });
       }
       if (safetyDir && existsSync(safetyDir)) {
         await fs.promises
           .rm(safetyDir, { recursive: true, force: true })
-          .catch(() => {});
+          .catch(() => { });
       }
       this.isRestoreInProgress = false;
     }
@@ -1529,7 +1471,7 @@ export class BackupsService {
     mkdirSync(defaultDir, { recursive: true, mode: 0o700 });
     try {
       fs.chmodSync(defaultDir, 0o700);
-    } catch {}
+    } catch { }
 
     try {
       fs.accessSync(defaultDir, fs.constants.W_OK);
@@ -1680,7 +1622,7 @@ export class BackupsService {
           });
         } catch (error: any) {
           if (error?.code === 'ENOENT') {
-            await fs.promises.rm(dstPath, { force: true }).catch(() => {});
+            await fs.promises.rm(dstPath, { force: true }).catch(() => { });
             continue;
           }
           throw error;
@@ -1700,7 +1642,7 @@ export class BackupsService {
       if (row?.name) {
         return row.name;
       }
-    } catch {}
+    } catch { }
 
     try {
       const pragma = this.databaseService.get<{ user_version: number }>(
@@ -1709,7 +1651,7 @@ export class BackupsService {
       if (pragma?.user_version !== undefined) {
         return String(pragma.user_version);
       }
-    } catch {}
+    } catch { }
 
     return 'initial_bootstrap';
   }
