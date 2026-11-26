@@ -247,7 +247,7 @@ waste your time if you reach for the conventional tool instead:
 | Expectation | Reality |
 | --- | --- |
 | CommonJS | **ESM.** `"type": "module"`, `module: nodenext`. |
-| ESLint | **[oxlint](https://oxc.rs)** — `npm run lint -w @glassbeetle/api`. There is no `eslint --fix`. |
+| ESLint | **[oxlint](https://oxc.rs)** — `npm run lint -w @glassbeetle/api`, `npm run lint -w @glassbeetle/web`. There is no `eslint --fix`. |
 | Jest | **[Vitest](https://vitest.dev)** — no `jest.mock()`, no `jest.fn()`. Use `vi.*`. |
 | `import './thing'` | **`import './thing.js'`** — the `.js` suffix is required. |
 
@@ -271,7 +271,7 @@ Or target one workspace: `npm run format -w @glassbeetle/api`,
 `cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml` when you touch
 it. A root `.editorconfig` covers the whole tree (the web copy remains for
 editors opened inside `apps/web/`). oxlint's rules live in
-`apps/api/oxlint.json`.
+`apps/api/oxlint.json` and `apps/web/oxlint.json`.
 
 ## Tests, lint and formatting
 
@@ -280,8 +280,9 @@ npm test                                  # API + frontend unit tests
 npm run test -w @glassbeetle/api          # API unit tests only
 npm run test:watch -w @glassbeetle/api    # …in watch mode
 npm run test:e2e -w @glassbeetle/api      # API integration tests
-npm run lint                              # oxlint (workspaces with a lint script)
+npm run lint                              # oxlint (workspaces with a lint script: API + web)
 npm run lint -w @glassbeetle/api          # …API only
+npm run lint -w @glassbeetle/web          # …frontend only
 npm run format                            # Prettier write (API + web)
 npm run format:check                      # Prettier check (no writes)
 npm run build                             # type-check both apps the way CI does

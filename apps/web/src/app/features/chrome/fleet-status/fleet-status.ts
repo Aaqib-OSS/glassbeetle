@@ -110,7 +110,7 @@ export class FleetStatus {
   protected readonly attention = computed(() =>
     this.entries()
       .filter((entry) => entry.readiness.level !== 'ready')
-      .sort((a, b) => (a.readiness.level === 'blocked' ? -1 : 1)),
+      .sort((a, _b) => (a.readiness.level === 'blocked' ? -1 : 1)),
   );
 
   protected readonly shown = computed(() => this.attention().slice(0, SHOWN));

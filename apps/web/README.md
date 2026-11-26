@@ -6,6 +6,7 @@ bundle in `dist/web/browser`.
 
 ```bash
 npm run dev:web          # just this app
+npm run lint -w @glassbeetle/web
 npm test -w @glassbeetle/web
 npm run build -w @glassbeetle/web
 npm run format -w @glassbeetle/web
