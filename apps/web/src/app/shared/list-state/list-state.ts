@@ -214,7 +214,7 @@ export class ListState<T, E extends object = Record<string, never>> {
       sort: this.sort(),
       order: this.order(),
       ...(search ? { search } : {}),
-      ...(this.config.extraParams?.() ?? {}),
+      ...this.config.extraParams?.(),
     } as ListPageQuery & E;
   }
 }
