@@ -65,22 +65,23 @@ The three tiers talk to each other like this:
 
 ## Scripts
 
-| Command                  | What it does                                              |
-| ------------------------ | --------------------------------------------------------- |
-| `npm run dev`            | API + Angular + Tauri window (the one command)             |
-| `npm start`              | Alias for `npm run dev`                                    |
-| `npm run dev:api`        | Just the NestJS API, in watch mode                         |
-| `npm run dev:web`        | Just the Angular dev server                                |
-| `npm run stop`           | Stop the API, the dev server and the Tauri window          |
-| `npm run build`          | Compile the API and build the Angular bundle               |
-| `npm run build:desktop`  | Build the API, then bundle the installable desktop app     |
-| `npm test`               | Run the API and frontend unit tests                        |
-| `npm run lint`           | Lint workspaces that define a `lint` script (API today)    |
-| `npm run format`         | Format API + web sources with Prettier                     |
-| `npm run format:check`   | Check formatting without writing                           |
-| `npm run test:e2e -w @glassbeetle/api` | Run the API end-to-end tests                 |
-| `npm run openapi:export -w @glassbeetle/api` | Write the OpenAPI spec to a file       |
-| `npm run clean`          | Remove `dist/` output and the Rust `target/` directory      |
+| Command                                      | What it does                                            |
+| -------------------------------------------- | ------------------------------------------------------- |
+| `npm run dev`                                | API + Angular + Tauri window (the one command)          |
+| `npm start`                                  | Alias for `npm run dev`                                 |
+| `npm run dev:api`                            | Just the NestJS API, in watch mode                      |
+| `npm run dev:web`                            | Just the Angular dev server                             |
+| `npm run stop`                               | Stop the API, the dev server and the Tauri window       |
+| `npm run build`                              | Compile the API and build the Angular bundle            |
+| `npm run build:sidecar`                      | Compile the self-contained NestJS API sidecar binary    |
+| `npm run build:desktop`                      | Build the API, sidecar, and bundle the desktop app      |
+| `npm test`                                   | Run the API and frontend unit tests                     |
+| `npm run lint`                               | Lint workspaces that define a `lint` script (API today) |
+| `npm run format`                             | Format API + web sources with Prettier                  |
+| `npm run format:check`                       | Check formatting without writing                        |
+| `npm run test:e2e -w @glassbeetle/api`       | Run the API end-to-end tests                            |
+| `npm run openapi:export -w @glassbeetle/api` | Write the OpenAPI spec to a file                        |
+| `npm run clean`                              | Remove `dist/` output and the Rust `target/` directory  |
 
 `npm run dev` shuts all three tiers down when you close the Tauri window, but a
 crashed terminal or a detached run can leave the API or the dev server holding
@@ -108,7 +109,7 @@ teams and their rosters, chats, shared memory, system prompts and service
 health. The modules that are still empty controllers have no screens.
 
 Where the schema promises more than the API serves, the UI says so rather than
-mocking it: agents show configuration *readiness* rather than an invented run
+mocking it: agents show configuration _readiness_ rather than an invented run
 state, the feed is labelled as configuration history, the spending screen
 states that nothing writes `usage_events` yet rather than presenting an
 untouched budget as a measurement, a chat shows the turns the API serves but no
@@ -141,10 +142,10 @@ the full list.
 Application data (the SQLite database, uploaded files, artifacts and backups)
 lives outside the repository, in a per-user directory:
 
-| Platform | Default data directory |
-| -------- | ---------------------- |
-| macOS    | `~/Library/Application Support/Glassbeetle` |
-| Windows  | `%APPDATA%\Glassbeetle` |
+| Platform | Default data directory                                          |
+| -------- | --------------------------------------------------------------- |
+| macOS    | `~/Library/Application Support/Glassbeetle`                     |
+| Windows  | `%APPDATA%\Glassbeetle`                                         |
 | Linux    | `$XDG_DATA_HOME/glassbeetle`, else `~/.local/share/glassbeetle` |
 
 Override it with `GLASSBEETLE_DATA_DIR` (absolute paths only).
@@ -155,13 +156,59 @@ Override it with `GLASSBEETLE_DATA_DIR` (absolute paths only).
 - Rust toolchain (`rustup`), plus the platform prerequisites for Tauri 2 —
   Xcode Command Line Tools on macOS
 
-## Packaging note
+## Packaging and Sidecar Architecture
 
-`npm run build:desktop` produces an installable app, but the bundle contains
-only the frontend and the Rust shell — it does not embed the NestJS server. A
-packaged build expects the API to already be running on port 3000. To ship the
-backend inside the installer, compile it to a binary and register it as a
-[Tauri sidecar](https://v2.tauri.app/develop/sidecar/).
+`npm run build:desktop` produces a fully self-contained, installable application that embeds the NestJS API server inside the app bundle as a [Tauri sidecar](https://v2.tauri.app/develop/sidecar/). The packaged app runs out of the box on machines without Node.js installed.
+
+### How it works
+
+1. **Self-contained Sidecar Binary (`glassbeetle-api`)**:
+   - The `@glassbeetle/api` TypeScript source is compiled to `dist/`.
+   - Production runtime dependencies (including `better-sqlite3`'s native `.node` addon) and the host Node.js runtime executable are packaged into a compressed payload archive (`sidecar_payload.tar.gz`).
+   - A standalone Rust launcher (`apps/desktop/src-tauri/src/bin/sidecar.rs`) embeds the payload archive and is compiled into `apps/desktop/src-tauri/binaries/glassbeetle-api-<target-triple>`.
+   - On first run, the sidecar unpacks its payload into a versioned cache directory (`~/Library/Caches/Glassbeetle/api-sidecar/<hash>/` on macOS, `%LOCALAPPDATA%\Glassbeetle\cache\api-sidecar\<hash>\` on Windows, `~/.cache/glassbeetle/api-sidecar/<hash>/` on Linux). On subsequent runs, it executes immediately in ~160ms.
+   - On Unix systems, the sidecar runner replaces itself with the Node process using `exec()`, eliminating intermediate wrapper overhead.
+
+2. **Process Lifecycle and Orphan Prevention**:
+   - In packaged builds, the Tauri shell starts the sidecar on launch and polls `http://127.0.0.1:3000/api/v1/health` in the background.
+   - The desktop window remains hidden until the API responds with `200 OK`, matching the `glassbeetle://ready` event sequencing.
+   - **Graceful Shutdown**: When the user closes the window or quits (Cmd+Q), the shell sends `SIGTERM` to the API process. NestJS shutdown hooks execute, releasing the SQLite handle and HTTP listener before exiting.
+   - **Ungraceful Termination / Crash Protection**: The shell connects a standard input pipe to the sidecar. If the desktop app crashes or is killed ungracefully (`kill -9`), the OS kernel closes the pipe. The API monitors stdin EOF and its parent PID, terminating immediately if orphaned. No background processes hold port 3000 afterwards.
+   - **Port Conflict Handling**: If port 3000 is already in use by another service on launch, the shell detects the conflict, avoids spawning a colliding process, and presents a visible, styled in-window error card with instructions (`npm run stop`).
+
+3. **Shared User Data**:
+   - Packaged builds and development builds use the exact same per-user data directory (`~/Library/Application Support/Glassbeetle` on macOS). Data created in development is immediately accessible in the packaged app, and vice versa.
+
+4. **Process Tree**:
+   ```text
+   glassbeetle.app/Contents/MacOS/glassbeetle-desktop
+   └── node dist/main.js (exec'd from glassbeetle-api)
+   ```
+
+### Building the Desktop Application
+
+```bash
+# Build the entire application (API, sidecar, Angular frontend, and Tauri bundle):
+npm run build:desktop
+
+# Or compile only the sidecar binary:
+npm run build:sidecar
+```
+
+### Debugging the Sidecar
+
+- **Logs**: Run the packaged executable directly from the terminal to see standard output and error streams:
+  ```bash
+  ./apps/desktop/src-tauri/target/release/bundle/macos/glassbeetle.app/Contents/MacOS/glassbeetle-desktop
+  ```
+- **Force Sidecar in Dev**: Test sidecar lifecycle behavior in debug builds by setting:
+  ```bash
+  GLASSBEETLE_FORCE_SIDECAR=1 npm run tauri:dev -w @glassbeetle/desktop
+  ```
+- **Check Port Listeners**:
+  ```bash
+  lsof -nP -iTCP:3000 -sTCP:LISTEN
+  ```
 
 ## Contributing
 

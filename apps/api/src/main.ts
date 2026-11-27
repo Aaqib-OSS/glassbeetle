@@ -33,6 +33,24 @@ const BIND_ADDRESS = '127.0.0.1';
  * providers close cleanly when the Tauri shell terminates the process.
  */
 async function bootstrap(): Promise<void> {
+  // When running as a packaged Tauri sidecar, guard against orphaned processes:
+  // 1. If the parent desktop shell crashes or closes the stdin pipe, exit immediately.
+  // 2. If the parent process terminates ungracefully and this process is reparented to init (PID 1), exit immediately.
+  if (process.env.GLASSBEETLE_SIDECAR === '1') {
+    process.stdin.resume();
+    process.stdin.on('end', () => {
+      process.exit(0);
+    });
+
+    const ppidWatchdog = setInterval(() => {
+      if (process.ppid === 1) {
+        clearInterval(ppidWatchdog);
+        process.exit(0);
+      }
+    }, 1000);
+    ppidWatchdog.unref();
+  }
+
   const app = await NestFactory.create(AppModule);
 
   configureApp(app);
