@@ -19,7 +19,10 @@
 #[cfg(target_os = "macos")]
 use tauri::menu::AboutMetadataBuilder;
 use tauri::menu::{Menu, MenuItemBuilder, SubmenuBuilder};
-use tauri::{AppHandle, Emitter, Manager, Runtime};
+use tauri::{AppHandle, Emitter, Runtime};
+
+#[cfg(debug_assertions)]
+use tauri::Manager;
 use tauri_plugin_opener::OpenerExt;
 
 /// Event carrying an action id to the frontend.

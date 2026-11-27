@@ -1,6 +1,8 @@
 mod corners;
 mod menu;
+mod sidecar;
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use tauri::{AppHandle, Listener, Manager, Runtime};
@@ -20,6 +22,46 @@ fn reveal<R: Runtime>(app: &AppHandle<R>) {
     if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
         let _ = window.show();
         let _ = window.set_focus();
+    }
+}
+
+/// Renders a styled error screen inside the webview when the sidecar cannot start.
+fn show_error_screen<R: Runtime>(
+    app: &AppHandle<R>,
+    title: &str,
+    message: &str,
+    hint: Option<&str>,
+) {
+    if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
+        let hint_html = match hint {
+            Some(h) => format!(
+                r#"<div style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:12px;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px;color:#79c0ff;margin:16px 0;text-align:left;">{h}</div>"#
+            ),
+            None => String::new(),
+        };
+
+        let script = format!(
+            r#"
+            (function() {{
+                const show = () => {{
+                    document.body.innerHTML = `
+                        <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;background:#0d1117;color:#e6edf3;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif;padding:32px;text-align:center;user-select:none;">
+                            <div style="background:#161b22;border:1px solid #30363d;border-radius:12px;padding:32px 40px;max-width:520px;box-shadow:0 8px 24px rgba(0,0,0,0.5);">
+                                <div style="font-size:36px;margin-bottom:16px;">⚠️</div>
+                                <h1 style="font-size:20px;font-weight:600;margin:0 0 12px 0;color:#f85149;">{title}</h1>
+                                <p style="font-size:14px;line-height:1.6;color:#8b949e;margin:0 0 12px 0;">{message}</p>
+                                {hint_html}
+                            </div>
+                        </div>
+                    `;
+                }};
+                if (document.body) {{ show(); }} else {{ document.addEventListener('DOMContentLoaded', show); }}
+            }})();
+            "#
+        );
+
+        let _ = window.eval(&script);
+        reveal(app);
     }
 }
 
@@ -59,6 +101,74 @@ pub fn run() {
                 corners::round(&window, corners::WINDOW_RADIUS);
             }
 
+            // In development (`npm run dev`), the API is started externally by the
+            // dev toolchain in watch mode. In release builds (or when forced via
+            // `GLASSBEETLE_FORCE_SIDECAR=1`), the Rust shell spawns and manages
+            // the compiled sidecar binary directly.
+            let is_dev = cfg!(debug_assertions);
+            let force_sidecar = std::env::var("GLASSBEETLE_FORCE_SIDECAR")
+                .map(|v| v == "1" || v == "true")
+                .unwrap_or(false);
+            let manage_sidecar = !is_dev || force_sidecar;
+
+            if manage_sidecar {
+                if sidecar::is_port_in_use(sidecar::DEFAULT_PORT) {
+                    log::error!(
+                        "Port {} is already in use; cannot start sidecar API",
+                        sidecar::DEFAULT_PORT
+                    );
+                    show_error_screen(
+                        app.handle(),
+                        "Port 3000 is already in use",
+                        "Glassbeetle API cannot start because another process is listening on port 3000.",
+                        Some("# Free the port from a terminal:<br/>npm run stop"),
+                    );
+                    return Ok(());
+                }
+
+                match sidecar::SidecarManager::start(sidecar::DEFAULT_PORT) {
+                    Ok(manager) => {
+                        app.manage(Arc::new(manager));
+                    }
+                    Err(err) => {
+                        log::error!("Failed to start API sidecar: {err}");
+                        show_error_screen(
+                            app.handle(),
+                            "Failed to start backend API",
+                            &err,
+                            Some("# Compile the sidecar binary:<br/>npm run build:sidecar"),
+                        );
+                        return Ok(());
+                    }
+                }
+
+                // Poll health in the background to ensure API answered before window appears
+                let health_app = app.handle().clone();
+                std::thread::spawn(move || {
+                    let start = std::time::Instant::now();
+                    let timeout = Duration::from_secs(20);
+                    let mut ready = false;
+                    while start.elapsed() < timeout {
+                        if sidecar::probe_health(sidecar::DEFAULT_PORT) {
+                            ready = true;
+                            break;
+                        }
+                        std::thread::sleep(Duration::from_millis(150));
+                    }
+                    if !ready {
+                        log::error!("API sidecar failed health check within {timeout:?}");
+                        show_error_screen(
+                            &health_app,
+                            "Backend API did not respond",
+                            "The backend API was started but did not respond to health checks in time.",
+                            Some("# Check running processes or logs:<br/>npm run stop"),
+                        );
+                    } else {
+                        log::info!("API sidecar answered health check successfully");
+                    }
+                });
+            }
+
             // The window is created hidden and revealed once the frontend
             // reports it has painted. A webview shown while still blank is a
             // white rectangle for a moment, which on a dark workspace reads as
@@ -75,14 +185,19 @@ pub fn run() {
             // there as a process with nothing on screen and no way to tell
             // what went wrong. After the grace period it is shown regardless:
             // a window displaying an error beats no window at all.
+            let fallback_timeout = if manage_sidecar {
+                Duration::from_secs(12)
+            } else {
+                READY_TIMEOUT
+            };
             let fallback = app.handle().clone();
             std::thread::spawn(move || {
-                std::thread::sleep(READY_TIMEOUT);
+                std::thread::sleep(fallback_timeout);
 
                 if let Some(window) = fallback.get_webview_window(MAIN_WINDOW) {
                     if !window.is_visible().unwrap_or(true) {
                         log::warn!(
-                            "frontend did not report ready within {READY_TIMEOUT:?}; \
+                            "frontend did not report ready within {fallback_timeout:?}; \
                              showing the window anyway"
                         );
                         reveal(&fallback);
@@ -91,6 +206,13 @@ pub fn run() {
             });
 
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed = event {
+                if let Some(sidecar) = window.app_handle().try_state::<Arc<sidecar::SidecarManager>>() {
+                    sidecar.stop();
+                }
+            }
         })
         .on_menu_event(|app, event| menu::handle(app, event.id().as_ref()))
         .invoke_handler(tauri::generate_handler![open_external])
