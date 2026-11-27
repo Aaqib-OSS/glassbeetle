@@ -23,6 +23,10 @@ npm-debug.log*
 .env
 .env.local
 
+# sidecar binaries and payload
+apps/desktop/src-tauri/binaries/
+apps/desktop/src-tauri/sidecar_payload.tar.gz
+
 # generated api spec
 apps/api/openapi.json
 
