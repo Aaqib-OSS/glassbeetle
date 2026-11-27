@@ -36,6 +36,7 @@ or ask a question. Half-finished work with a question attached is welcome.
 - [Opening a pull request](#opening-a-pull-request)
 - [What review looks at](#what-review-looks-at)
 - [Conventions that are not decided yet](#conventions-that-are-not-decided-yet)
+- [Packaging & Sidecar Development](#packaging--sidecar-development)
 - [Getting help](#getting-help)
 - [Licence and conduct](#licence-and-conduct)
 
@@ -508,6 +509,34 @@ did, and link the design issue so the decision lands in one place:
 - **Usage events.** Nothing writes them yet, which is why the spending screen
   reads zero everywhere. Whoever implements inference will establish how they
   are recorded.
+
+## Packaging & Sidecar Development
+
+The desktop app bundles the NestJS backend as a self-contained [Tauri sidecar](https://v2.tauri.app/develop/sidecar/). In development (`npm run dev`), the three tiers (API, Angular, Tauri shell) run as independent processes in watch mode without touching the sidecar. In release packaging (`npm run build:desktop`), the API is compiled into a self-contained binary embedding Node and native dependencies (`better-sqlite3`).
+
+### Building and Testing the Sidecar
+
+```bash
+# 1. Compile API, package sidecar binary, and bundle desktop app:
+npm run build:desktop
+
+# Or compile only the sidecar binary:
+npm run build:sidecar
+```
+
+### Verification Checklist for Desktop Changes
+
+When modifying the desktop shell or sidecar lifecycle, verify:
+1. **End-to-End Application**: Run the packaged bundle (`./apps/desktop/src-tauri/target/release/bundle/macos/glassbeetle.app/Contents/MacOS/glassbeetle-desktop`) and verify the window appears only once the API answers. Real data (agents, profile) loads.
+2. **Graceful Shutdown**: Close the window or press Cmd+Q. Verify that port 3000 is immediately released (`lsof -nP -iTCP:3000 -sTCP:LISTEN`).
+3. **Crash / Force-Kill Protection**: Force-kill the desktop shell (`kill -9 <desktop_pid>`). Verify that the sidecar terminates via its stdin EOF / parent PID watchdog with 0 orphaned processes left.
+4. **Port Conflict**: Start a listener on port 3000 first, then launch the app. Confirm the in-window error card explains the conflict legibly.
+5. **Shared User Data**: Check that the packaged application reads and writes the same user database as the development build (`~/Library/Application Support/Glassbeetle` on macOS).
+
+### Platform Status
+
+- **macOS (`aarch64-apple-darwin`)**: Fully verified end-to-end (Sonoma/Sequoia, Apple Silicon).
+- **Linux (`x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`) & Windows (`x86_64-pc-windows-msvc`)**: Architecture-aware target resolution, Unix exec/Windows watchdog fallback, and packaging paths are implemented; platform-specific testing will be verified as CI runners are added.
 
 ## Getting help
 
